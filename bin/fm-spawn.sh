@@ -91,6 +91,10 @@ BRIEF="$FM_ROOT/data/$ID/brief.md"
 [ -f "$BRIEF" ] || { echo "error: no brief at $BRIEF" >&2; exit 1; }
 PROJ_ABS="$(cd "$PROJ" && pwd)"
 
+# Refresh this project's clone so the crewmate branches off current code (this replaces the
+# session-start fleet refresh the old bootstrap did). Best-effort and non-fatal.
+"$FM_ROOT/bin/fm-fleet-sync.sh" "$PROJ_ABS" >/dev/null 2>&1 || true
+
 # Create the crewmate's worktree (a herdr worktree workspace) before the turn-end hook
 # below is written into it. $WT is the worktree path, $WS its herdr workspace id, $RP the
 # spare root pane the launch step will replace.

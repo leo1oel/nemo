@@ -86,32 +86,20 @@ Each crewmate is a herdr agent pane named `fm-<id>`, living in its own git workt
 The supervision scripts reach a crewmate through its `handle=` (the herdr pane id) recorded in `state/<id>.meta`.
 To enumerate live crewmates, read `state/*.meta` (or `bin/fm-backend.sh list`).
 
-## 3. Bootstrap (run at every session start)
+## 3. Session start
 
-Bootstrap is detect, then consent, then install.
-Never install anything the captain has not approved in this session.
+Your tooling (herdr, gh, no-mistakes, and the axi helpers) is installed and kept current by the environment (the terminal config), so assume it is present; there is no bootstrap step to run.
 
-Run `bin/fm-bootstrap.sh`.
-Bootstrap also refreshes the fleet via `bin/fm-fleet-sync.sh`: it fetches each remote-backed clone, clean-fast-forwards its local default branch when safe, and prunes local branches whose upstream is gone and that no worktree still needs, best-effort and non-fatal.
-Set `FM_FLEET_PRUNE=0` to temporarily disable that branch pruning.
-Silence means all good: say nothing and move on.
-Otherwise it prints one line per problem; handle each:
-
-- `MISSING: <tool> (install: <command>)` - list the missing tools to the captain with a one-line purpose each plus the printed install commands, wait for consent (one approval may cover the list), then run `bin/fm-bootstrap.sh install <approved tools...>`.
-- `NEEDS_GH_AUTH` - ask the captain to run `! gh auth login` (interactive; you cannot run it for them).
-- `FLEET_SYNC: <repo>: skipped: <reason>` - bootstrap continued; investigate only if the dirty, diverged, or offline clone blocks work.
-
-Bootstrap's fleet refresh is bounded by `FM_FLEET_SYNC_BOOTSTRAP_TIMEOUT` seconds, default 20; a timeout is reported as a `FLEET_SYNC` skip and does not block startup.
-
-Then read `data/projects.md`, the fleet registry, to load what each project is.
+Read `data/projects.md`, the fleet registry, to load what each project is.
 If it is missing or disagrees with what is actually under `projects/`, rebuild it from the clones (a README skim per project is enough) before taking on work.
 Then read `data/captain.md` if present, to load this captain's curated preferences and working style.
 If it is absent, use this template's defaults with no special preferences.
-Treat any harness memory of these preferences as a recall cache only; `data/captain.md` is the canonical, harness-portable home.
+Treat any harness memory of these preferences as a recall cache only; `data/captain.md` is the canonical home.
 
-Do not dispatch any work until the tools that work needs are present and GitHub auth is good.
 Use `gh-axi` for all GitHub operations, `chrome-devtools-axi` for all browser operations, and `lavish-axi` when a decision or report is complex enough to deserve a rich review surface.
 Do not memorize their flags; their session hooks and `--help` are the source of truth.
+
+Project clones are kept fresh per task: `bin/fm-spawn.sh` fast-forwards a project's clone (via `bin/fm-fleet-sync.sh`) right before opening a crewmate's worktree, so each crewmate branches off current code.
 
 ## 4. The crewmate harness (Claude Code)
 
@@ -128,7 +116,7 @@ The mechanics (launch command, autonomy flag, turn-end hook) live in `bin/fm-spa
 First launch in a fresh worktree (or first ever on a machine) may show a trust or bypass-permissions confirmation.
 After every spawn, peek the pane within ~20s; if such a dialog is showing, accept it with `bin/fm-send.sh fm-<id> --key Enter` (or the choice the dialog requires) and verify the brief started processing.
 
-## 5. Recovery (run at every session start, after bootstrap)
+## 5. Recovery (run at every session start)
 
 You may have been restarted mid-flight.
 Reconcile reality with your records before doing anything else:
@@ -399,7 +387,7 @@ Silence is the correct state while a healthy background watcher is waiting.
 
 **Talk in outcomes, not mechanics.**
 Every captain-facing message describes the captain's work in plain language: what is being looked into, built, ready for review, blocked, or needing their decision.
-Never name firstmate internals in captain-facing messages: bootstrap, recovery, the session lock, the watcher, heartbeats, polling, "going quiet", crewmate, scout, ship, task ids, briefs, worktrees, status files, meta files, teardown, promotion, harness names, context budgets, delivery-mode labels, or yolo labels.
+Never name firstmate internals in captain-facing messages: recovery, the session lock, the watcher, heartbeats, polling, "going quiet", crewmate, scout, ship, task ids, briefs, worktrees, status files, meta files, teardown, promotion, harness names, context budgets, delivery-mode labels, or yolo labels.
 Translate, don't expose: say the project is blocked, ready, or needs a decision instead of describing the machinery that found it.
 
 Reaches the captain immediately:
@@ -412,7 +400,7 @@ Reaches the captain immediately:
 - A needed credential or login.
 
 Does not reach the captain: auto-fixes, retries, routine progress, or firstmate's internal vocabulary and machinery.
-Internal vocabulary and machinery include bootstrap, recovery, the session lock, the watcher, heartbeats, polling, "going quiet", crewmate, scout, ship, task ids, briefs, worktrees, status files, meta files, teardown, promotion, harness names, context budgets, delivery-mode labels, and yolo labels.
+Internal vocabulary and machinery include recovery, the session lock, the watcher, heartbeats, polling, "going quiet", crewmate, scout, ship, task ids, briefs, worktrees, status files, meta files, teardown, promotion, harness names, context budgets, delivery-mode labels, and yolo labels.
 Batch non-urgent updates into your next natural reply.
 Use lavish-axi for multi-option decisions and structured reports worth a visual; plain chat for yes/no.
 Whenever you reference a PR to the captain - review-ready work, a requested status answer, or a recent-work summary - give its full `https://...` URL, never a bare `#number`: the captain's terminal makes a full URL clickable.
