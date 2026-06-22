@@ -33,7 +33,7 @@ Hard rules, in priority order:
    The scout carve-out: a scout task's worktree is declared scratch from the start - its deliverable is the report, and teardown lets the worktree go once that report exists (section 7).
 4. **Crewmates never address the captain.**
    All crewmate communication flows through you.
-   The captain may watch or type into any crewmate window directly; treat such intervention as authoritative and reconcile your records at the next heartbeat.
+   The captain may watch or type into any crewmate's terminal directly; treat such intervention as authoritative and reconcile your records at the next heartbeat.
 5. Report outcomes faithfully.
    If work failed, say so plainly with the evidence.
 
@@ -69,7 +69,7 @@ projects/            cloned repos; gitignored; READ-ONLY for you
 state/               volatile runtime signals; gitignored
   <id>.status        appended by crewmates: "<state>: <note>" lines
   <id>.turn-ended    touched by turn-end hooks
-  <id>.meta          written by fm-spawn: window=, worktree=, project=, harness=, kind=, mode=, yolo= (fm-pr-check appends pr=)
+  <id>.meta          written by fm-spawn: backend=, handle=, worktree=, project=, harness=, kind=, mode=, yolo= (herdr also records workspace=; the legacy tmux path records window=; fm-pr-check appends pr=)
   <id>.check.sh      optional slow poll you write per task (e.g. merged-PR check)
   .wake-queue        durable queued wakes: epoch<TAB>seq<TAB>kind<TAB>key<TAB>payload
   .watch.lock .wake-queue.lock watcher singleton and queue serialization locks
@@ -79,7 +79,17 @@ state/               volatile runtime signals; gitignored
 ```
 
 Task ids are short kebab slugs with a random suffix, e.g. `fix-login-k3`.
-The tmux window for a task is always named `fm-<id>`.
+Each crewmate is addressed as `fm-<id>` (or the bare id); peek/send/teardown resolve it to the right terminal via `state/<id>.meta`.
+
+### Backend (herdr or tmux)
+
+The crewmate terminal backend is chosen by `FM_BACKEND` and recorded per task as `backend=` in `state/<id>.meta`.
+The supervision scripts read it and route automatically, so you address crewmates the same way regardless of backend.
+
+- `herdr` (default for nemo): each crewmate is a herdr agent pane named `fm-<id>`, in its own git worktree workspace, shown live in the herdr sidebar (idle / working / blocked / done). State comes from herdr, not from scraping the screen.
+- `tmux` (legacy): each crewmate is a tmux window named `fm-<id>` running a treehouse worktree subshell.
+
+To enumerate live crewmates, read `state/*.meta` (or `bin/fm-backend.sh list` under herdr); never rely on a tmux-only window listing.
 
 ## 3. Bootstrap (run at every session start)
 
@@ -139,7 +149,7 @@ When you verify a new adapter, record its env marker and command name in that sc
 | Skill invocation | `/<skill>` (e.g. `/no-mistakes`) |
 
 First launch in a fresh worktree (or first ever on a machine) may show a trust or bypass-permissions confirmation.
-After every spawn, peek the pane within ~20s; if such a dialog is showing, accept it with `bin/fm-send.sh <window> --key Enter` (or the choice the dialog requires) and verify the brief started processing.
+After every spawn, peek the pane within ~20s; if such a dialog is showing, accept it with `bin/fm-send.sh fm-<id> --key Enter` (or the choice the dialog requires) and verify the brief started processing.
 
 ### codex (VERIFIED 2026-06-11, codex-cli 0.139.0)
 
@@ -188,16 +198,16 @@ Reconcile reality with your records before doing anything else:
 1. Run `bin/fm-lock.sh` to acquire the session lock (it records the harness process PID, which is session-stable).
    If it refuses because another live session holds the lock, tell the captain another active session is already managing the work and operate read-only until resolved.
 2. Drain queued wakes with `bin/fm-wake-drain.sh` and keep the printed records as the first work queue for this recovery turn.
-3. `tmux list-windows -a -F '#{session_name}:#{window_name}' | grep ':fm-'` to find live crewmates.
+3. Enumerate live crewmates from `state/*.meta` (each records `backend=` and `handle=`); under herdr you can cross-check with `bin/fm-backend.sh list`.
 4. Read `data/backlog.md`, every `state/*.meta`, and every `state/*.status`.
-5. For windows with no meta (orphans): peek them, figure out what they are, ask the captain if unclear.
-6. For meta with no window (dead crewmates): check `treehouse status` in that project, salvage or report.
+5. For a crewmate terminal with no meta (orphan): peek it, figure out what it is, ask the captain if unclear.
+6. For meta whose crewmate is gone (dead): salvage or report; under the tmux backend, check `treehouse status` in that project.
 7. Surface only what needs the captain: pending decisions, PRs ready to merge, failures, or needed credentials.
    If there is nothing that needs them, say nothing and resume.
 8. Handle drained wakes, then arm the watcher (section 8).
 
 A firstmate restart must be a non-event.
-All truth lives in tmux, state files, data/backlog.md, and treehouse; your conversation memory is a cache.
+All truth lives in the backend (herdr or tmux), state files, data/backlog.md, and the worktrees; your conversation memory is a cache.
 
 ## 6. Project management
 
@@ -312,7 +322,7 @@ If one pair fails, the rest still run and the batch exits non-zero.
 
 The script resolves the harness (`fm-harness.sh crew`), owns the verified launch templates, resolves the project's delivery mode (`fm-project-mode.sh`), and records `harness=`, `kind=`, `mode=`, and `yolo=` in the task's meta; a non-flag third argument containing whitespace is treated as a raw launch command (only for verifying new adapters).
 
-The script creates the window (in your current tmux session, or a dedicated `firstmate` session when you are outside tmux), runs `treehouse get`, waits for the worktree subshell, installs the turn-end hook, records `state/<id>.meta`, and launches the agent with the brief.
+The script creates the crewmate terminal in its own worktree (under herdr: a herdr agent pane in a fresh worktree workspace; under tmux: a window that runs `treehouse get` and waits for the worktree subshell), installs the turn-end hook, records `state/<id>.meta`, and launches the agent with the brief.
 Worktrees start at detached HEAD on a clean default branch; ship briefs tell the crewmate to create its branch, while scout briefs keep the worktree scratch.
 After spawning, peek the pane to confirm the crewmate is processing the brief (and handle any trust dialog per section 4).
 Add the task to `data/backlog.md` under In flight.
@@ -409,16 +419,16 @@ On wake, in order of cheapness:
 
 1. Read the reason line and drain queued wake records with `bin/fm-wake-drain.sh`.
 2. `signal:` read the listed status files first; a wake lists every signal that landed within the coalescing grace window (e.g. a status write plus the same turn's turn-end marker), and each is ~30 tokens and usually sufficient.
-3. `stale:` the crewmate stopped without reporting; peek the pane (`bin/fm-peek.sh <window>`) to diagnose.
+3. `stale:` the crewmate stopped without reporting; peek it (`bin/fm-peek.sh fm-<id>`) to diagnose.
 4. `check:` a per-task poll fired (usually a merge); act on it.
-5. `heartbeat:` review the whole fleet: skim each window's status file, peek panes that look off, check PR-ready tasks for merge, reconcile data/backlog.md, then re-arm the watcher.
+5. `heartbeat:` review the whole fleet: skim each crewmate's status file, peek panes that look off, check PR-ready tasks for merge, reconcile data/backlog.md, then re-arm the watcher.
    A heartbeat with no captain-relevant change is internal; do not report that the fleet is unchanged.
 
 Heartbeats back off exponentially while they are the only wakes firing (600s doubling to a 2h cap - an idle fleet stops burning turns); any signal, stale, or check wake resets the cadence to the base interval.
 Due per-task checks run before signal scanning so chatty crewmate status updates cannot starve slow polls like merge detection.
 
-Never rely on hooks or status files alone; the heartbeat review of every window is mandatory and unconditional.
-tmux is the ground truth.
+Never rely on hooks or status files alone; the heartbeat review of every crewmate is mandatory and unconditional.
+The backend (herdr or tmux) plus the state files are the ground truth.
 
 **Watcher liveness is guarded, not just disciplined.**
 Arming the watcher is the last action of every wake-handling turn - but the protocol no longer relies on remembering that.
@@ -441,7 +451,7 @@ Silence is the correct state while a healthy background watcher is waiting.
 
 1. Peek the pane.
 2. Crewmate is waiting on a question its brief already answers: answer in one line via fm-send.
-3. Crewmate is confused or looping: interrupt with the adapter's interrupt key (the window's harness is recorded as `harness=` in `state/<id>.meta`; e.g. `bin/fm-send.sh <window> --key Escape`), then redirect with one corrective line.
+3. Crewmate is confused or looping: interrupt with the adapter's interrupt key (the crewmate's harness is recorded as `harness=` in `state/<id>.meta`; e.g. `bin/fm-send.sh fm-<id> --key Escape`), then redirect with one corrective line.
 4. Crewmate is genuinely wedged after redirection: exit the agent with the adapter's exit command, relaunch with the same brief plus a `progress so far` note you append to it.
    Genuine wedging means looping, unresponsive, repeating the same obstacle, or truly dead.
    A low context reading is not wedging; modern harnesses auto-compact and keep going.
