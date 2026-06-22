@@ -55,6 +55,7 @@ if [ "${#POS[@]}" -gt 0 ] && [ "${POS[0]}" != "$idpart" ] && case "$idpart" in *
   done
   exit "$rc"
 fi
+[ "${#POS[@]}" -ge 2 ] || { echo "usage: fm-spawn.sh <task-id> <project-dir> [launch-command] [--scout]   (or several id=repo pairs)" >&2; exit 2; }
 ID=${POS[0]}
 PROJ=${POS[1]}
 ARG3=${POS[2]:-}

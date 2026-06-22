@@ -28,6 +28,7 @@ for a in "$@"; do
     *) POS+=("$a") ;;
   esac
 done
+[ "${#POS[@]}" -ge 2 ] || { echo "usage: fm-brief.sh <task-id> <repo-name> [--scout]" >&2; exit 2; }
 ID=${POS[0]}
 REPO=${POS[1]}
 

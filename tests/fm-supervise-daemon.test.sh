@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# shellcheck disable=SC1090,SC2030,SC2031  # daemon sourced via runtime $DAEMON; subshell-local env is intentional
 # Behavior tests for bin/fm-supervise-daemon.sh — the presence-gated sub-supervisor.
 # The daemon is sourceable (fm_super_main runs only when executed), so we source it
 # and exercise the pure classifiers, the /afk presence-gating contract, and the
