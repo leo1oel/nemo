@@ -78,8 +78,8 @@ case "$ARG3" in
     done
     ;;
   '')
-    HARNESS=$("$FM_ROOT/bin/fm-harness.sh" crew)
-    LAUNCH=$(launch_template "$HARNESS") || { echo "error: no launch template for harness '$HARNESS' (from config/crew-harness or detection); pass a raw launch command to use an unverified adapter" >&2; exit 1; }
+    HARNESS=claude   # this fork is Claude-only
+    LAUNCH=$(launch_template "$HARNESS")
     ;;
   *)
     HARNESS=$ARG3
