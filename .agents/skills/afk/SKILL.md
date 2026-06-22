@@ -79,12 +79,13 @@ or herdr-level typed-vs-injected distinction.
 The daemon never injects into an in-use pane. Two checks run before every
 injection:
 
-- **`pane_is_busy`** — the captain pane shows Claude's busy footer (mid-turn),
-  read via `herdr pane read`.
-- **`pane_input_pending`** — best-effort composer check: herdr exposes no cursor
-  position, so the daemon reads the bottom of the visible pane and treats a
-  non-blank, non-idle last line as unsubmitted content (e.g. a previous
-  injection whose Enter was swallowed).
+- **`pane_is_busy`** — reads herdr's `agent_status` for the pane (caught live as
+  the reliable signal: it covers Claude's thinking phase, which the busy-footer
+  text alone misses). Footer regex is the fallback when the integration is absent.
+- **`pane_input_pending`** — reads Claude's `❯` composer line (herdr exposes no
+  cursor position; the composer is not the last line — status footers render
+  below it). Text after the marker means unsubmitted content, e.g. a previous
+  injection whose Enter was swallowed.
 
 Either condition defers the injection; the buffered escalation survives in
 `state/.subsuper-escalations` and is retried on the next housekeeping tick. In

@@ -94,8 +94,11 @@ STALE_ESCALATE_SECS_DEFAULT=240
 ESCALATE_BATCH_SECS_DEFAULT=90
 HEARTBEAT_SCAN_SECS_DEFAULT=300
 HOUSEKEEPING_TICK_DEFAULT=15
-# Claude's busy-pane signature (mirrors fm-watch.sh; this fork is Claude-only).
-BUSY_REGEX_DEFAULT='esc to interrupt'
+# Busy-footer FALLBACK regex, used only when herdr agent_status is unavailable
+# (integration not installed). Covers the tool-run footer ("esc to interrupt")
+# AND the thinking spinner line ("… (thinking with <effort> effort)"), which the
+# bare "esc to interrupt" misses. Primary busy detection is agent_status.
+BUSY_REGEX_DEFAULT='esc to interrupt|thinking with'
 CAPTAIN_RE_DEFAULT='done:|needs-decision:|blocked:|failed:|PR ready|checks green|ready in branch|merged'
 # Patterns that indicate an EMPTY composer (idle pane, no pending input). Used by
 # pane_input_pending to distinguish "bare prompt, nothing typed" from "human
@@ -400,35 +403,55 @@ pane_exists() {  # <pane-id>
   herdr pane get "$1" >/dev/null 2>&1
 }
 
-# 0 if the pane is currently showing a busy signature (crewmate/captain working).
+# herdr agent_status for a pane (set by the claude integration). Empty if the
+# integration is absent or the pane is gone. Parsed with grep so the daemon keeps
+# no python dependency.
+_pane_status() {  # <pane-id>
+  herdr pane get "$1" 2>/dev/null | grep -o '"agent_status":"[^"]*"' | head -1 | cut -d'"' -f4
+}
+
+# 0 if the pane is currently busy (agent working). PRIMARY signal is herdr's
+# agent_status, which covers BOTH the thinking spinner and tool-run phases — the
+# busy footer alone misses thinking (Claude shows "… (thinking with <effort>
+# effort)", not "esc to interrupt"). Falls back to the footer regex only when
+# agent_status is unavailable (integration not installed).
 pane_is_busy() {  # <window-or-pane>
-  local w=$1 h tail40
+  local w=$1 h st tail40
   h=$(_handle_for "$w" "$(_state_root)")
   [ -n "$h" ] || return 1
+  st=$(_pane_status "$h")
+  case "$st" in
+    working) return 0 ;;
+    idle|blocked|done) return 1 ;;
+  esac
+  # agent_status unknown/empty -> footer-regex fallback.
   tail40=$(herdr pane read "$h" --source visible --lines 40 2>/dev/null) || return 1
   printf '%s' "$tail40" | grep -v '^[[:space:]]*$' | tail -6 \
     | grep -qiE "${FM_BUSY_REGEX:-$BUSY_REGEX_DEFAULT}"
 }
 
-# pane_input_pending: best-effort detection of unsubmitted content in the
-# captain's composer. herdr exposes no cursor position (tmux's `#{cursor_y}` has
-# no equivalent), so instead of reading the exact cursor line we read the bottom
-# of the visible pane and test its last non-blank line against the idle-composer
-# regex: a match (bare prompt / busy footer) means the composer is effectively
-# empty (not pending); a non-blank, non-idle last line is treated as pending.
-# It catches a previous injection whose Enter was swallowed (text still shown).
-# Imperfect by construction; inject_msg therefore also accepts "a turn started
-# (pane busy)" as a positive submit ack, so a noisy composer render cannot wedge
-# injection. FM_COMPOSER_IDLE_RE overrides the idle pattern (extended regex).
+# pane_input_pending: detect unsubmitted content in Claude's composer. herdr
+# exposes no cursor position (no equivalent of tmux `#{cursor_y}`), so we read the
+# rendered composer directly. Claude's composer is the prompt line that begins
+# with the input marker ❯, between the rule lines; the model/effort and
+# bypass-permission FOOTERS render BELOW it, so the composer is NOT the last
+# visible line (the original tail-1 read footers, never the composer). We take the
+# lowest ❯ line (the live composer; conversation history is above it) and test
+# whether anything is typed after the marker. Catches a previous injection whose
+# Enter was swallowed (text still in the composer). inject_msg also accepts "a
+# turn started (pane busy)" as a positive submit ack, so a transient render glitch
+# cannot wedge injection. FM_COMPOSER_IDLE_RE overrides the idle filter.
 pane_input_pending() {  # <window-or-pane>
-  local target=$1 h out line
+  local target=$1 h out line content
   h=$(_handle_for "$target" "$(_state_root)")
   [ -n "$h" ] || return 1
-  out=$(herdr pane read "$h" --source visible --lines 8 2>/dev/null) || return 1
-  line=$(printf '%s\n' "$out" | grep -v '^[[:space:]]*$' | tail -1)
-  line="${line%"${line##*[![:space:]]}"}"
+  out=$(herdr pane read "$h" --source visible --lines 25 2>/dev/null) || return 1
+  line=$(printf '%s\n' "$out" | grep -E '^[[:space:]]*❯' | tail -1)
   [ -n "$line" ] || return 1
-  printf '%s' "$line" | grep -qiE "${FM_COMPOSER_IDLE_RE:-$COMPOSER_IDLE_RE_DEFAULT}" && return 1
+  content=$(printf '%s' "$line" | sed -E 's/^[[:space:]]*❯[[:space:]]*//; s/[[:space:]]*$//')
+  [ -n "$content" ] || return 1
+  # Defensive: ignore a recognized idle/busy token that is not real typed input.
+  printf '%s' "$content" | grep -qiE "${FM_COMPOSER_IDLE_RE:-$COMPOSER_IDLE_RE_DEFAULT}" && return 1
   return 0
 }
 
