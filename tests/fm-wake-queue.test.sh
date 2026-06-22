@@ -31,24 +31,20 @@ make_case() {
   dir="$TMP_ROOT/$name"
   fakebin="$dir/fakebin"
   mkdir -p "$dir/state" "$fakebin"
-  cat > "$fakebin/tmux" <<'SH'
+  cat > "$fakebin/herdr" <<'SH'
 #!/usr/bin/env bash
 set -u
-if [ "${1:-}" = "list-windows" ]; then
-  if [ -n "${FM_FAKE_TMUX_WINDOW:-}" ]; then
-    printf '%s\n' "$FM_FAKE_TMUX_WINDOW"
+# Fake herdr for tests: the watcher's staleness loop calls `herdr pane read` (via
+# fm-backend.sh). Return the canned capture; no-op everything else.
+if [ "${1:-}" = "pane" ] && [ "${2:-}" = "read" ]; then
+  if [ -n "${FM_FAKE_PANE_CAPTURE:-}" ]; then
+    cat "$FM_FAKE_PANE_CAPTURE"
   fi
   exit 0
 fi
-if [ "${1:-}" = "capture-pane" ]; then
-  if [ -n "${FM_FAKE_TMUX_CAPTURE:-}" ]; then
-    cat "$FM_FAKE_TMUX_CAPTURE"
-  fi
-  exit 0
-fi
-exit 1
+exit 0
 SH
-  chmod +x "$fakebin/tmux"
+  chmod +x "$fakebin/herdr"
   printf '%s\n' "$dir"
 }
 
@@ -149,24 +145,26 @@ test_signal_catchup_without_running_watcher() {
 }
 
 test_stale_enqueue_before_suppressor() {
-  local dir state fakebin out drain_out capture_file window key pane_hash
+  local dir state fakebin out drain_out capture_file id key pane_hash
   dir=$(make_case stale)
   state="$dir/state"
   fakebin="$dir/fakebin"
   out="$dir/watch.out"
   drain_out="$dir/drain.out"
   capture_file="$dir/pane.txt"
-  window="test:fm-stale"
+  id="stale"
   printf 'idle prompt' > "$capture_file"
-  key=$(printf '%s' "$window" | tr ':/.' '___')
+  # A live task: the watcher enumerates state/*.meta and reads each by its handle.
+  printf 'handle=p1\n' > "$state/$id.meta"
+  key="fm-$id"
   pane_hash=$(hash_text "idle prompt")
   printf '%s' "$pane_hash" > "$state/.hash-$key"
   printf '1\n' > "$state/.count-$key"
-  PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$capture_file" FM_STATE_OVERRIDE="$state" FM_POLL=1 FM_SIGNAL_GRACE=1 FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" > "$out" &
+  PATH="$fakebin:$PATH" FM_FAKE_PANE_CAPTURE="$capture_file" FM_STATE_OVERRIDE="$state" FM_POLL=1 FM_SIGNAL_GRACE=1 FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" > "$out" &
   wait_for_exit "$!" 40 || fail "watcher did not exit for stale pane"
-  grep -Fx "stale: $window" "$out" >/dev/null || fail "watcher did not print stale wake"
+  grep -Fx "stale: fm-$id" "$out" >/dev/null || fail "watcher did not print stale wake"
   FM_STATE_OVERRIDE="$state" "$DRAIN" > "$drain_out" || fail "drain after stale wake failed"
-  grep "$(printf '\tstale\t')" "$drain_out" | grep -F "$window" >/dev/null || fail "stale wake was not queued"
+  grep "$(printf '\tstale\t')" "$drain_out" | grep -F "fm-$id" >/dev/null || fail "stale wake was not queued"
   [ "$(cat "$state/.stale-$key" 2>/dev/null || true)" = "$pane_hash" ] || fail "stale suppressor was not written"
   pass "stale wake is queued before suppressor state is advanced"
 }

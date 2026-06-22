@@ -1,9 +1,8 @@
 #!/usr/bin/env bash
 # Crewmate terminal backend abstraction.
 #
-# firstmate originally drove crewmates through tmux windows. This layer hides the
-# multiplexer behind a backend-neutral contract so the rest of the toolbelt never
-# names tmux or herdr directly. Pick the backend with FM_BACKEND (default herdr).
+# The fm-* scripts call this for all crewmate terminal operations instead of naming herdr
+# directly, so the multiplexer stays behind one seam.
 #
 # Subcommands (the contract every backend implements):
 #   open     <id> <project-dir>                creates the per-task worktree (and its
@@ -23,18 +22,14 @@
 #   send-key <handle> <key>                    sends a single key (Escape|Enter|C-c|...)
 #   state    <handle>                          prints idle|working|blocked|done|unknown
 #   list                                       prints one fm-<id> task handle per line
-#   kill     <handle> [workspace]              destroys the crewmate terminal (and, for
-#                                              herdr, removes its worktree+workspace)
+#   kill     <handle> [workspace]              removes the worktree and closes its
+#                                              herdr workspace + pane (killing the agent)
 #
-# <launch-cmd> is a shell command string (e.g. 'claude ... "$(cat brief.md)"'); it is
-# delivered to the crewmate's interactive shell, so command substitutions expand there,
-# not here - exactly as the old `tmux send-keys -l` path behaved.
+# <launch-cmd> is a shell command string (e.g. 'claude ... "$(cat brief.md)"'); launch runs
+# it via `bash -lc`, so command substitutions expand in that shell, not here.
 #
-# The herdr backend is verified against herdr 0.7.0 (socket CLI). The tmux backend is
-# not yet extracted here; the legacy tmux path still lives in the individual fm-* scripts.
+# Verified against herdr 0.7.0 (socket CLI).
 set -eu
-
-FM_BACKEND=${FM_BACKEND:-herdr}
 
 # Extract a dotted path from JSON on stdin. Missing -> empty string, never an error.
 _jget() {
@@ -63,7 +58,7 @@ sys.stdout.write("" if d is None else str(d))
 # herdr backend
 ############################
 
-# tmux-style key names -> herdr key names (herdr accepts enter/tab/esc/ctrl+<x>/arrows).
+# Common key names -> herdr key names (herdr accepts enter/tab/esc/ctrl+<x>/arrows).
 _herdr_key() {
   case "$1" in
     Escape|Esc|escape|esc) echo esc ;;
@@ -147,28 +142,16 @@ herdr_kill() {
 ############################
 
 op=${1:-}; shift || true
-case "$FM_BACKEND" in
-  herdr)
-    case "$op" in
-      open)     herdr_open "$@" ;;
-      launch)   herdr_launch "$@" ;;
-      spawn)    herdr_spawn "$@" ;;
-      read)     herdr_read "$@" ;;
-      send)     herdr_send "$@" ;;
-      send-text) herdr_send_text "$@" ;;
-      send-key) herdr_send_key "$@" ;;
-      state)    herdr_state "$@" ;;
-      list)     herdr_list ;;
-      kill)     herdr_kill "$@" ;;
-      *) echo "fm-backend: unknown op '$op' (open|launch|spawn|read|send|send-text|send-key|state|list|kill)" >&2; exit 2 ;;
-    esac
-    ;;
-  tmux)
-    echo "fm-backend: FM_BACKEND=tmux not implemented in fm-backend.sh yet; the legacy tmux path lives in the fm-* scripts." >&2
-    exit 3
-    ;;
-  *)
-    echo "fm-backend: unknown FM_BACKEND='$FM_BACKEND' (expected herdr|tmux)" >&2
-    exit 2
-    ;;
+case "$op" in
+  open)     herdr_open "$@" ;;
+  launch)   herdr_launch "$@" ;;
+  spawn)    herdr_spawn "$@" ;;
+  read)     herdr_read "$@" ;;
+  send)     herdr_send "$@" ;;
+  send-text) herdr_send_text "$@" ;;
+  send-key) herdr_send_key "$@" ;;
+  state)    herdr_state "$@" ;;
+  list)     herdr_list ;;
+  kill)     herdr_kill "$@" ;;
+  *) echo "fm-backend: unknown op '$op' (open|launch|spawn|read|send|send-text|send-key|state|list|kill)" >&2; exit 2 ;;
 esac

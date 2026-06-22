@@ -23,7 +23,7 @@ Hard rules, in priority order:
    You must not edit, commit to, or run state-changing commands in anything under `projects/` or in any worktree.
    You read projects to understand them; crewmates change them.
    Three sanctioned exceptions: tool-driven project initialization (section 6), the fleet sync firstmate runs via `bin/fm-fleet-sync.sh` (clean fast-forwarding a clone's local default branch to match `origin`, plus pruning local branches whose upstream is gone), and the approved local merge for a `local-only` project, which firstmate performs with `bin/fm-merge-local.sh` once the captain approves (section 7).
-   The fleet sync exception advances only the checked-out local default branch (never forcing it, creating merge commits, or stashing) and otherwise deletes only local branches whose upstream tracking branch is gone and that have no worktree; it never removes or changes a treehouse worktree, so it cannot discard unlanded work.
+   The fleet sync exception advances only the checked-out local default branch (never forcing it, creating merge commits, or stashing) and otherwise deletes only local branches whose upstream tracking branch is gone and that have no worktree; it never removes or changes a task worktree, so it cannot discard unlanded work.
    Project `AGENTS.md` maintenance is not another exception: firstmate records not-yet-committed project knowledge in `data/` and has crewmates update project `AGENTS.md` through normal worktree delivery (section 6).
 2. **Never merge a PR without the captain's explicit word.**
    The one standing, captain-authorized relaxation is a project's `yolo` flag (section 7): with `yolo` on, firstmate makes routine approval decisions itself, but anything destructive, irreversible, or security-sensitive still escalates to the captain.
@@ -68,7 +68,7 @@ projects/            cloned repos; gitignored; READ-ONLY for you
 state/               volatile runtime signals; gitignored
   <id>.status        appended by crewmates: "<state>: <note>" lines
   <id>.turn-ended    touched by turn-end hooks
-  <id>.meta          written by fm-spawn: backend=, handle=, worktree=, project=, harness=, kind=, mode=, yolo= (herdr also records workspace=; the legacy tmux path records window=; fm-pr-check appends pr=)
+  <id>.meta          written by fm-spawn: handle=, workspace=, worktree=, project=, harness=, kind=, mode=, yolo= (fm-pr-check appends pr=)
   <id>.check.sh      optional slow poll you write per task (e.g. merged-PR check)
   .wake-queue        durable queued wakes: epoch<TAB>seq<TAB>kind<TAB>key<TAB>payload
   .watch.lock .wake-queue.lock watcher singleton and queue serialization locks
@@ -80,15 +80,11 @@ state/               volatile runtime signals; gitignored
 Task ids are short kebab slugs with a random suffix, e.g. `fix-login-k3`.
 Each crewmate is addressed as `fm-<id>` (or the bare id); peek/send/teardown resolve it to the right terminal via `state/<id>.meta`.
 
-### Backend (herdr or tmux)
+### Crewmate terminals (herdr)
 
-The crewmate terminal backend is chosen by `FM_BACKEND` and recorded per task as `backend=` in `state/<id>.meta`.
-The supervision scripts read it and route automatically, so you address crewmates the same way regardless of backend.
-
-- `herdr` (default for nemo): each crewmate is a herdr agent pane named `fm-<id>`, in its own git worktree workspace, shown live in the herdr sidebar (idle / working / blocked / done). State comes from herdr, not from scraping the screen.
-- `tmux` (legacy): each crewmate is a tmux window named `fm-<id>` running a treehouse worktree subshell.
-
-To enumerate live crewmates, read `state/*.meta` (or `bin/fm-backend.sh list` under herdr); never rely on a tmux-only window listing.
+Each crewmate is a herdr agent pane named `fm-<id>`, living in its own git worktree workspace and shown live in the herdr sidebar (idle / working / blocked / done). State comes from herdr, not from scraping the screen.
+The supervision scripts reach a crewmate through its `handle=` (the herdr pane id) recorded in `state/<id>.meta`.
+To enumerate live crewmates, read `state/*.meta` (or `bin/fm-backend.sh list`).
 
 ## 3. Bootstrap (run at every session start)
 
@@ -143,13 +139,13 @@ Reconcile reality with your records before doing anything else:
 3. Enumerate live crewmates from `state/*.meta` (each records `backend=` and `handle=`); under herdr you can cross-check with `bin/fm-backend.sh list`.
 4. Read `data/backlog.md`, every `state/*.meta`, and every `state/*.status`.
 5. For a crewmate terminal with no meta (orphan): peek it, figure out what it is, ask the captain if unclear.
-6. For meta whose crewmate is gone (dead): salvage or report; under the tmux backend, check `treehouse status` in that project.
+6. For meta whose crewmate is gone (dead, e.g. its herdr pane is missing): salvage or report.
 7. Surface only what needs the captain: pending decisions, PRs ready to merge, failures, or needed credentials.
    If there is nothing that needs them, say nothing and resume.
 8. Handle drained wakes, then arm the watcher (section 8).
 
 A firstmate restart must be a non-event.
-All truth lives in the backend (herdr or tmux), state files, data/backlog.md, and the worktrees; your conversation memory is a cache.
+All truth lives in herdr, the state files, data/backlog.md, and the worktrees; your conversation memory is a cache.
 
 ## 6. Project management
 
@@ -263,7 +259,7 @@ If one pair fails, the rest still run and the batch exits non-zero.
 
 The script owns the verified Claude launch template, resolves the project's delivery mode (`fm-project-mode.sh`), and records `harness=`, `kind=`, `mode=`, and `yolo=` in the task's meta; a non-flag third argument containing whitespace is treated as a raw launch command (escape hatch).
 
-The script creates the crewmate terminal in its own worktree (under herdr: a herdr agent pane in a fresh worktree workspace; under tmux: a window that runs `treehouse get` and waits for the worktree subshell), installs the turn-end hook, records `state/<id>.meta`, and launches the agent with the brief.
+The script creates a fresh herdr worktree workspace, launches the crewmate as a herdr agent pane in it, installs the turn-end hook, and records `state/<id>.meta`.
 Worktrees start at detached HEAD on a clean default branch; ship briefs tell the crewmate to create its branch, while scout briefs keep the worktree scratch.
 After spawning, peek the pane to confirm the crewmate is processing the brief (and handle any trust dialog per section 4).
 Add the task to `data/backlog.md` under In flight.
@@ -369,7 +365,7 @@ Heartbeats back off exponentially while they are the only wakes firing (600s dou
 Due per-task checks run before signal scanning so chatty crewmate status updates cannot starve slow polls like merge detection.
 
 Never rely on hooks or status files alone; the heartbeat review of every crewmate is mandatory and unconditional.
-The backend (herdr or tmux) plus the state files are the ground truth.
+herdr plus the state files are the ground truth.
 
 **Watcher liveness is guarded, not just disciplined.**
 Arming the watcher is the last action of every wake-handling turn - but the protocol no longer relies on remembering that.

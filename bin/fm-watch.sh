@@ -187,20 +187,15 @@ EOF
   # Layer 1 backbone: pane staleness. Two consecutive identical hashes with no busy
   # signature means the crewmate finished, is waiting, or is wedged. Each distinct
   # stale state is reported once (.stale-* remembers the hash already reported).
-  # Enumerate live tasks from their meta files so the watcher spans backends: each
-  # task's backend= decides how its screen tail is captured (herdr pane vs tmux pane).
+  # Enumerate live tasks from their meta files and capture each crewmate's screen tail
+  # through the herdr backend.
   for meta in "$STATE"/*.meta; do
     [ -e "$meta" ] || continue
     id=$(basename "$meta" .meta)
-    be=$(sed -n 's/^backend=//p' "$meta"); [ -n "$be" ] || be=tmux
-    hl=$(sed -n 's/^handle=//p' "$meta"); [ -n "$hl" ] || hl=$(sed -n 's/^window=//p' "$meta")
+    hl=$(sed -n 's/^handle=//p' "$meta")
     [ -n "$hl" ] || continue
-    if [ "$be" = herdr ]; then
-      tail40=$(FM_BACKEND=herdr "$SCRIPT_DIR/fm-backend.sh" read "$hl" 40 2>/dev/null) || continue
-    else
-      tail40=$(tmux capture-pane -p -t "$hl" -S -40 2>/dev/null) || continue
-    fi
-    w="fm-$id"   # backend-neutral label used for the state keys and the wake reason
+    tail40=$("$SCRIPT_DIR/fm-backend.sh" read "$hl" 40 2>/dev/null) || continue
+    w="fm-$id"   # label used for the state keys and the wake reason
     h=$(printf '%s' "$tail40" | hash_pane)
     key=$(printf '%s' "$w" | tr ':/.' '___')
     hf="$STATE/.hash-$key"

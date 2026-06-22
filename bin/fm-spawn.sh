@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Spawn a crewmate: tmux window -> treehouse worktree subshell -> agent launched with its brief.
+# Spawn a crewmate: a herdr worktree workspace -> agent launched in it with its brief.
 # Usage: fm-spawn.sh <task-id> <project-dir> [launch-command] [--scout]
 #   This fork is Claude-only: with no third arg the crewmate runs Claude Code. A non-flag
 #   string containing whitespace is treated as a RAW launch command (escape hatch).
@@ -15,7 +15,7 @@
 #     __BRIEF__    absolute path to data/<task-id>/brief.md
 # The Claude turn-end hook (a Stop hook in the worktree's .claude/settings.local.json) is
 # installed automatically.
-# On success prints: spawned <id> harness=<name> kind=<ship|scout> mode=<mode> yolo=<on|off> window=<session:window> worktree=<path>
+# On success prints: spawned <id> harness=<name> kind=<ship|scout> mode=<mode> yolo=<on|off> handle=<pane> worktree=<path>
 # mode/yolo are resolved per-project from data/projects.md via fm-project-mode.sh.
 set -eu
 
@@ -91,56 +91,16 @@ BRIEF="$FM_ROOT/data/$ID/brief.md"
 [ -f "$BRIEF" ] || { echo "error: no brief at $BRIEF" >&2; exit 1; }
 PROJ_ABS="$(cd "$PROJ" && pwd)"
 
-# Crewmate terminal backend, chosen by FM_BACKEND (default tmux):
-#   herdr - each crewmate is a herdr agent pane in its own worktree workspace
-#   tmux  - legacy path: a tmux window running a treehouse worktree subshell
-# Either way this block leaves $WT pointing at the task's worktree, so the
-# turn-end hooks below can be written into it before the agent launches.
-FM_BACKEND=${FM_BACKEND:-tmux}
+# Create the crewmate's worktree (a herdr worktree workspace) before the turn-end hook
+# below is written into it. $WT is the worktree path, $WS its herdr workspace id, $RP the
+# spare root pane the launch step will replace.
 BACKEND="$FM_ROOT/bin/fm-backend.sh"
-T=""; WS=""; RP=""
-
-if [ "$FM_BACKEND" = herdr ]; then
-  OPENED=$(FM_BACKEND=herdr "$BACKEND" open "$ID" "$PROJ_ABS") \
-    || { echo "error: 'fm-backend open' failed for $ID" >&2; exit 1; }
-  WT=$(printf '%s\n' "$OPENED" | sed -n 's/^worktree=//p')
-  WS=$(printf '%s\n' "$OPENED" | sed -n 's/^workspace=//p')
-  RP=$(printf '%s\n' "$OPENED" | sed -n 's/^rootpane=//p')
-  [ -n "$WT" ] && [ -n "$WS" ] || { echo "error: 'fm-backend open' returned no worktree/workspace" >&2; exit 1; }
-else
-  # Same session when firstmate already runs inside tmux; dedicated session otherwise.
-  if [ -n "${TMUX:-}" ]; then
-    SES=$(tmux display-message -p '#S')
-  else
-    tmux has-session -t firstmate 2>/dev/null || tmux new-session -d -s firstmate
-    SES=firstmate
-  fi
-
-  W="fm-$ID"
-  T="$SES:$W"
-  if tmux list-windows -t "$SES" -F '#{window_name}' | grep -qx "$W"; then
-    echo "error: window $T already exists" >&2
-    exit 1
-  fi
-
-  tmux new-window -d -t "$SES" -n "$W" -c "$PROJ_ABS"
-  tmux send-keys -t "$T" 'treehouse get' Enter
-
-  # Wait for the treehouse subshell: the pane's cwd moves from the project to the worktree.
-  WT=""
-  for _ in $(seq 1 60); do
-    p=$(tmux display-message -p -t "$T" '#{pane_current_path}' 2>/dev/null || true)
-    if [ -n "$p" ] && [ "$p" != "$PROJ_ABS" ]; then
-      WT="$p"
-      break
-    fi
-    sleep 1
-  done
-  if [ -z "$WT" ]; then
-    echo "error: treehouse get did not enter a worktree within 60s; inspect window $T" >&2
-    exit 1
-  fi
-fi
+OPENED=$("$BACKEND" open "$ID" "$PROJ_ABS") \
+  || { echo "error: 'fm-backend open' failed for $ID" >&2; exit 1; }
+WT=$(printf '%s\n' "$OPENED" | sed -n 's/^worktree=//p')
+WS=$(printf '%s\n' "$OPENED" | sed -n 's/^workspace=//p')
+RP=$(printf '%s\n' "$OPENED" | sed -n 's/^rootpane=//p')
+[ -n "$WT" ] && [ -n "$WS" ] || { echo "error: 'fm-backend open' returned no worktree/workspace" >&2; exit 1; }
 
 # Per-harness turn-end hook: a file that touches state/<id>.turn-ended when the
 # agent finishes a turn. Worktree-resident hooks are kept out of git's view so
@@ -174,30 +134,17 @@ EOF
 
 LAUNCH=${LAUNCH//__BRIEF__/$BRIEF}
 
-# Start the crewmate. HANDLE is the backend-neutral target peek/send/teardown use:
-# the herdr agent pane id, or the tmux session:window.
-HANDLE=""
-if [ "$FM_BACKEND" = herdr ]; then
-  LAUNCHED=$(FM_BACKEND=herdr "$BACKEND" launch "$ID" "$WS" "$WT" "$LAUNCH" "$RP") \
-    || { echo "error: 'fm-backend launch' failed for $ID" >&2; exit 1; }
-  HANDLE=$(printf '%s\n' "$LAUNCHED" | sed -n 's/^handle=//p')
-  [ -n "$HANDLE" ] || { echo "error: 'fm-backend launch' returned no handle" >&2; exit 1; }
-else
-  tmux send-keys -t "$T" -l "$LAUNCH"
-  sleep 0.3
-  tmux send-keys -t "$T" Enter
-  HANDLE="$T"
-fi
+# Start the crewmate in its worktree pane. HANDLE (the herdr pane id) is what
+# peek/send/teardown use to reach it.
+LAUNCHED=$("$BACKEND" launch "$ID" "$WS" "$WT" "$LAUNCH" "$RP") \
+  || { echo "error: 'fm-backend launch' failed for $ID" >&2; exit 1; }
+HANDLE=$(printf '%s\n' "$LAUNCHED" | sed -n 's/^handle=//p')
+[ -n "$HANDLE" ] || { echo "error: 'fm-backend launch' returned no handle" >&2; exit 1; }
 
 mkdir -p "$FM_ROOT/state"
 {
-  echo "backend=$FM_BACKEND"
   echo "handle=$HANDLE"
-  if [ "$FM_BACKEND" = herdr ]; then
-    echo "workspace=$WS"
-  else
-    echo "window=$T"   # back-compat alias still read by the tmux path of peek/send/teardown
-  fi
+  echo "workspace=$WS"
   echo "worktree=$WT"
   echo "project=$PROJ_ABS"
   echo "harness=$HARNESS"
@@ -206,4 +153,4 @@ mkdir -p "$FM_ROOT/state"
   echo "yolo=$YOLO"
 } > "$FM_ROOT/state/$ID.meta"
 
-echo "spawned $ID harness=$HARNESS kind=$KIND mode=$MODE yolo=$YOLO backend=$FM_BACKEND handle=$HANDLE worktree=$WT"
+echo "spawned $ID harness=$HARNESS kind=$KIND mode=$MODE yolo=$YOLO handle=$HANDLE worktree=$WT"

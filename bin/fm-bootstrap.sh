@@ -53,15 +53,15 @@ fleet_sync() {
 
 install_cmd() {
   case "$1" in
-    tmux|node|gh) echo "brew install $1  # or the platform's package manager" ;;
-    treehouse) echo "curl -fsSL https://kunchenguid.github.io/treehouse/install.sh | sh" ;;
+    node|gh) echo "brew install $1  # or the platform's package manager" ;;
+    herdr) echo "curl -fsSL https://herdr.dev/install.sh | sh" ;;
     no-mistakes) echo "curl -fsSL https://raw.githubusercontent.com/kunchenguid/no-mistakes/main/docs/install.sh | sh" ;;
     gh-axi|chrome-devtools-axi|lavish-axi) echo "npm install -g $1 && $1 setup hooks" ;;
     *) return 1 ;;
   esac
 }
 
-TOOLS="tmux node gh treehouse no-mistakes gh-axi chrome-devtools-axi lavish-axi"
+TOOLS="herdr node gh no-mistakes gh-axi chrome-devtools-axi lavish-axi"
 
 if [ "${1:-}" = "install" ]; then
   shift
