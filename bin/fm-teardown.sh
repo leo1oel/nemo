@@ -90,7 +90,7 @@ if [ "$BACKEND" = herdr ]; then
   # Remove our hook file, then let herdr remove the worktree AND close its workspace+pane
   # (one call kills the agent process too). Finally drop the now-unused task branch and
   # prune the worktree registration so the source repo does not accumulate refs.
-  [ -d "$WT" ] && rm -f "$WT/.claude/settings.local.json" "$WT/.opencode/plugins/fm-turn-end.js" 2>/dev/null || true
+  [ -d "$WT" ] && rm -f "$WT/.claude/settings.local.json" 2>/dev/null || true
   FM_BACKEND=herdr "$FM_ROOT/bin/fm-backend.sh" kill "$HANDLE" "$WS" || true
   git -C "$PROJ" worktree prune 2>/dev/null || true
   git -C "$PROJ" branch -D "fm-$ID" >/dev/null 2>&1 || true
@@ -104,7 +104,7 @@ else
       fi
     fi
     # Remove our hook file so a reused pool worktree cannot fire signals for a dead task.
-    rm -f "$WT/.claude/settings.local.json" "$WT/.opencode/plugins/fm-turn-end.js"
+    rm -f "$WT/.claude/settings.local.json"
     # Kills remaining processes in the worktree (including the agent), resets, returns
     # to pool. treehouse resolves the pool from the working directory, so run it from
     # the project.
@@ -113,7 +113,7 @@ else
 
   tmux kill-window -t "$T" 2>/dev/null || true
 fi
-rm -f "$STATE/$ID.status" "$STATE/$ID.turn-ended" "$STATE/$ID.check.sh" "$STATE/$ID.meta" "$STATE/$ID.pi-ext.ts"
+rm -f "$STATE/$ID.status" "$STATE/$ID.turn-ended" "$STATE/$ID.check.sh" "$STATE/$ID.meta"
 if [ "$KIND" != scout ] && [ "$MODE" != local-only ]; then
   "$FM_ROOT/bin/fm-fleet-sync.sh" "$PROJ" || true
 fi

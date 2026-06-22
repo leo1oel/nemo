@@ -1,10 +1,8 @@
 #!/usr/bin/env bash
 # Spawn a crewmate: tmux window -> treehouse worktree subshell -> agent launched with its brief.
-# Usage: fm-spawn.sh <task-id> <project-dir> [harness|launch-command] [--scout]
-#   With no harness arg, the harness comes from fm-harness.sh crew (config/crew-harness,
-#   falling back to firstmate's own harness). A bare adapter name (claude|codex|
-#   opencode|pi) overrides it for this spawn. A non-flag string containing whitespace
-#   is treated as a RAW launch command - the escape hatch for verifying new adapters.
+# Usage: fm-spawn.sh <task-id> <project-dir> [launch-command] [--scout]
+#   This fork is Claude-only: with no third arg the crewmate runs Claude Code. A non-flag
+#   string containing whitespace is treated as a RAW launch command (escape hatch).
 #   --scout records kind=scout in the task's meta (report deliverable, scratch worktree;
 #   see AGENTS.md section 7); the default is kind=ship.
 # Batch dispatch: pass one or more `id=repo` pairs instead of a single <id> <project>, e.g.
@@ -13,13 +11,10 @@
 #   source of truth; a shared --scout applies to every pair. The loop lives here, in bash,
 #   so callers never hand-write a multi-task shell loop (the tool shell is zsh, which does
 #   not word-split unquoted $vars and silently breaks ad-hoc `for ... in $pairs` loops).
-#   Launch templates live in launch_template() below; placeholders replaced before launch:
+#   The launch template lives in launch_template() below; the only placeholder is:
 #     __BRIEF__    absolute path to data/<task-id>/brief.md
-#     __TURNEND__  absolute path to state/<task-id>.turn-ended (for harnesses whose
-#                  turn-end signal rides the launch command, e.g. codex -c notify=[...])
-#     __PIEXT__    absolute path to state/<task-id>.pi-ext.ts (pi turn-end extension,
-#                  written by this script; outside the worktree to avoid pi's trust gate)
-# Per-harness turn-end hooks are installed automatically; some live outside the worktree.
+# The Claude turn-end hook (a Stop hook in the worktree's .claude/settings.local.json) is
+# installed automatically.
 # On success prints: spawned <id> harness=<name> kind=<ship|scout> mode=<mode> yolo=<on|off> window=<session:window> worktree=<path>
 # mode/yolo are resolved per-project from data/projects.md via fm-project-mode.sh.
 set -eu
@@ -70,9 +65,6 @@ launch_template() {
   # shellcheck disable=SC2016  # single quotes are deliberate: $(cat ...) expands in the crewmate pane, not here
   case "$1" in
     claude) printf '%s' 'claude --dangerously-skip-permissions "$(cat __BRIEF__)"' ;;
-    codex) printf '%s' 'codex --dangerously-bypass-approvals-and-sandbox -c "notify=[\"bash\",\"-c\",\"touch __TURNEND__\"]" "$(cat __BRIEF__)"' ;;
-    opencode) printf '%s' 'OPENCODE_CONFIG_CONTENT='\''{"permission":{"*":"allow"}}'\'' opencode --prompt "$(cat __BRIEF__)"' ;;
-    pi) printf '%s' 'pi -e __PIEXT__ "$(cat __BRIEF__)"' ;;
     *) return 1 ;;
   esac
 }
@@ -169,35 +161,6 @@ case "$HARNESS" in
 EOF
     exclude_path '.claude/settings.local.json'
     ;;
-  opencode*)
-    mkdir -p "$WT/.opencode/plugins"
-    cat > "$WT/.opencode/plugins/fm-turn-end.js" <<EOF
-export const FmTurnEnd = async ({ \$ }) => ({
-  event: async ({ event }) => {
-    if (event.type === "session.idle") await \$\`touch $TURNEND\`
-  },
-})
-EOF
-    exclude_path '.opencode/plugins/fm-turn-end.js'
-    ;;
-  pi*)
-    # Written OUTSIDE the worktree: pi's project-trust gate fires on any extension
-    # loaded from inside the project (verified live), but an explicit -e path
-    # elsewhere loads without a dialog. Lives in state/, cleaned by teardown.
-    cat > "$FM_ROOT/state/$ID.pi-ext.ts" <<EOF
-// Firstmate turn-end signal; written by fm-spawn.
-// Use "turn_end" (fires after each turn the agent finishes), not "agent_end"
-// (fires once, only when the whole run exits): the watcher needs a signal at
-// every turn boundary so an idle crewmate is surfaced, not just at shutdown.
-import { execFile } from "node:child_process";
-export default function (pi: any) {
-  pi.on("turn_end", () => execFile("touch", ["$TURNEND"]));
-}
-EOF
-    ;;
-  codex*)
-    # codex: turn-end rides the launch command via -c notify=[...] and __TURNEND__.
-    ;;
 esac
 
 # Per-project delivery mode + yolo flag (bin/fm-project-mode.sh; AGENTS.md sections 6-7).
@@ -210,8 +173,6 @@ $("$FM_ROOT/bin/fm-project-mode.sh" "$PROJ_NAME")
 EOF
 
 LAUNCH=${LAUNCH//__BRIEF__/$BRIEF}
-LAUNCH=${LAUNCH//__TURNEND__/$TURNEND}
-LAUNCH=${LAUNCH//__PIEXT__/$FM_ROOT/state/$ID.pi-ext.ts}
 
 # Start the crewmate. HANDLE is the backend-neutral target peek/send/teardown use:
 # the herdr agent pane id, or the tmux session:window.

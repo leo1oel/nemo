@@ -66,7 +66,7 @@ $ claude   # launch your agent harness here; AGENTS.md takes over
 **Prerequisites** (the first mate detects everything else and offers to install it):
 
 ```sh
-# 1. a verified agent harness - claude, codex, opencode, or pi
+# 1. Claude Code (this fork is Claude-only)
 # 2. git + GitHub auth
 # 3. tmux - the crew lives in tmux windows (firstmate offers to install it if missing)
 gh auth login
@@ -146,14 +146,14 @@ The first mate drives these; you rarely need to, but they work by hand too.
 | `fm-pr-check.sh`         | Record a PR-ready task and arm the watcher's merge poll                                                             |
 | `fm-promote.sh`          | Promote a scout task in place so it becomes a protected ship task                                                   |
 | `fm-teardown.sh`         | Return the worktree and kill the window; protects ship work, requires scout reports, and reminds backlog refresh    |
-| `fm-harness.sh`          | Detect the running harness; resolve the effective crewmate harness                                                  |
+| `fm-harness.sh`          | Print the crewmate harness (Claude-only)                                                  |
 | `fm-lock.sh`             | Single-firstmate session lock                                                                                       |
 
 ## Configuration
 
 The shared orchestrator behavior lives in `AGENTS.md` - edit it like any prompt when the fleet is empty, or dispatch shared-repo edits to a crewmate while tasks are in flight.
 Personal preferences for one captain's fleet live locally in `data/captain.md`; it is gitignored and read after `data/projects.md` during bootstrap.
-Harness support is a table in section 4: claude, codex, opencode, and pi are all empirically verified; new harnesses get verified through a supervised trial task before joining the table.
+This fork is Claude-only; crewmates run on Claude Code. To add other agents, pull the harness adapters from upstream firstmate.
 
 Runtime tuning via environment variables (defaults shown):
 
@@ -167,7 +167,7 @@ FM_GUARD_GRACE=300      # seconds a stale watcher beacon may age before guard wa
 FM_SIGNAL_GRACE=30      # seconds to coalesce nearby status and turn-end signals into one wake
 FM_FLEET_SYNC_BOOTSTRAP_TIMEOUT=20   # seconds allowed for bootstrap's best-effort clone refresh
 FM_FLEET_PRUNE=1        # set to 0 to skip pruning local branches whose upstream is gone
-FM_BUSY_REGEX='esc (to )?interrupt|Working\.\.\.'   # busy-pane signatures, extend per harness
+FM_BUSY_REGEX='esc to interrupt'   # Claude's busy-pane signature
 ```
 
 ## Development

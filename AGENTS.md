@@ -58,7 +58,6 @@ README.md            public overview and development notes
 .agents/skills/      shared skills, committed
 .claude/skills       symlink to .agents/skills for claude compatibility
 bin/                 helper scripts, committed, including fm-fleet-sync.sh for clean default-branch refreshes and gone-branch pruning; read each script's header before first use
-config/crew-harness  crewmate harness override; LOCAL, gitignored; absent or "default" = same as firstmate
 data/                personal fleet records; LOCAL, gitignored as a whole
   backlog.md         task queue, dependencies, history
   captain.md         captain's curated personal preferences and working style - approval posture, communication style, release habits; LOCAL, gitignored; compact rewrite-and-prune counterpart to shared AGENTS.md; canonical harness-portable home, even if harness memory mirrors it as a recall cache
@@ -104,7 +103,6 @@ Otherwise it prints one line per problem; handle each:
 
 - `MISSING: <tool> (install: <command>)` - list the missing tools to the captain with a one-line purpose each plus the printed install commands, wait for consent (one approval may cover the list), then run `bin/fm-bootstrap.sh install <approved tools...>`.
 - `NEEDS_GH_AUTH` - ask the captain to run `! gh auth login` (interactive; you cannot run it for them).
-- `CREW_HARNESS_OVERRIDE: <name>` - record and use the override silently; surface a harness fact only if it actually blocks work or the captain asks.
 - `FLEET_SYNC: <repo>: skipped: <reason>` - bootstrap continued; investigate only if the dirty, diverged, or offline clone blocks work.
 
 Bootstrap's fleet refresh is bounded by `FM_FLEET_SYNC_BOOTSTRAP_TIMEOUT` seconds, default 20; a timeout is reported as a `FLEET_SYNC` skip and does not block startup.
@@ -118,28 +116,11 @@ Treat any harness memory of these preferences as a recall cache only; `data/capt
 Do not dispatch any work until the tools that work needs are present and GitHub auth is good.
 Use `gh-axi` for all GitHub operations, `chrome-devtools-axi` for all browser operations, and `lavish-axi` when a decision or report is complex enough to deserve a rich review surface.
 Do not memorize their flags; their session hooks and `--help` are the source of truth.
-If the captain names a different crewmate harness at bootstrap or later, write it to `config/crew-harness` (local, gitignored); that is the whole switch.
 
-## 4. Harness adapters
+## 4. The crewmate harness (Claude Code)
 
-Crewmates default to the same harness you are running on.
-The captain may override this at any time, typically at bootstrap: record the choice in `config/crew-harness` (a single word - an adapter name below; the file is local and gitignored, so each machine keeps its own; absent or `default` means mirror your own harness).
-The recorded harness is used for every dispatch until changed; a per-task instruction from the captain ("run this one on codex") overrides it for that dispatch only.
-Resolve `default` by detecting your own harness (below).
-
-Each adapter splits into mechanics and knowledge.
-The mechanics (launch command, autonomy flag, turn-end hook) live in `bin/fm-spawn.sh`; the knowledge you need while supervising (busy signature, exit, interrupt, dialogs, quirks) lives in the tables below.
-**Never dispatch a crewmate on an unverified adapter.**
-If `config/crew-harness` names an unverified one, tell the captain and fall back to your own harness until it is verified.
-If the captain asks for a new harness, propose verifying it first: spawn a trivial supervised task using fm-spawn's raw-launch-command escape hatch, confirm every fact empirically, then record the mechanics in fm-spawn, the busy signature in fm-watch's `FM_BUSY_REGEX` default, and the knowledge here, and commit.
-
-### Detecting harnesses
-
-`bin/fm-harness.sh` prints your own harness (verified env markers first, then process ancestry); `bin/fm-harness.sh crew` resolves the effective crewmate harness from `config/crew-harness`.
-On `unknown`, ask the captain instead of guessing; a captain override always beats detection.
-When you verify a new adapter, record its env marker and command name in that script.
-
-### claude (VERIFIED)
+Crewmates run on Claude Code; this fork is Claude-only.
+The mechanics (launch command, autonomy flag, turn-end hook) live in `bin/fm-spawn.sh`; the supervision knowledge is below.
 
 | Fact | Value |
 |---|---|
@@ -150,45 +131,6 @@ When you verify a new adapter, record its env marker and command name in that sc
 
 First launch in a fresh worktree (or first ever on a machine) may show a trust or bypass-permissions confirmation.
 After every spawn, peek the pane within ~20s; if such a dialog is showing, accept it with `bin/fm-send.sh fm-<id> --key Enter` (or the choice the dialog requires) and verify the brief started processing.
-
-### codex (VERIFIED 2026-06-11, codex-cli 0.139.0)
-
-| Fact | Value |
-|---|---|
-| Busy-pane signature | `esc to interrupt` (shown as `• Working (Xs • esc to interrupt)`) |
-| Exit command | `/quit` (slash popup needs ~1s between text and Enter; fm-send handles it) |
-| Interrupt | single Escape |
-| Skill invocation | `$<skill>` (e.g. `$no-mistakes`); `/<skill>` is claude-only and codex rejects it as "Unrecognized command" |
-
-Directory trust dialog on first run per repo root ("Do you trust the contents of this directory?") - accept with Enter; the decision persists for the repo, so later worktrees of the same project skip it.
-Resume after exit: `codex resume <session-id>` (printed on quit).
-
-### opencode (VERIFIED 2026-06-11, v1.15.7-1.17.3)
-
-| Fact | Value |
-|---|---|
-| Busy-pane signature | `esc interrupt` (dotted spinner footer; note: no "to") |
-| Exit command | `/exit` |
-| Interrupt | double Escape; known flaky while a long shell command runs - a wedged pane may need `/exit` and relaunch |
-
-No trust dialog.
-Caution: opencode auto-upgrades itself in the background and the running TUI can exit mid-task (observed live: 1.15.7 -> 1.17.3).
-If a pane shows the exit banner, relaunch with `--continue` to resume the session - but `--prompt` does NOT auto-submit alongside `--continue`; send the next instruction via fm-send once the TUI is up.
-
-### pi (VERIFIED 2026-06-11)
-
-| Fact | Value |
-|---|---|
-| Busy-pane signature | `Working...` (braille spinner prefix; no "esc to interrupt" text) |
-| Exit command | `/quit` |
-| Interrupt | single Escape |
-
-pi has no permission system - crewmates are always autonomous.
-Keep the brief as ONE positional argument - multiple positional args become separate queued messages (fm-spawn's template does this correctly).
-Project trust dialog can appear on the first pi run in any not-yet-trusted directory (observed even on clean worktrees); accept with Enter - the decision persists per path in `~/.pi/agent/trust.json`, so later spawns in the same worktree slot skip it.
-fm-spawn keeps the turn-end extension in `state/`, outside the worktree, because project-local extension files make the trust gate strictly worse (and pollute the project).
-The extension must listen for pi's `turn_end` event, not `agent_end`, so the watcher wakes after each completed turn instead of only when the whole agent run exits.
-Environment marker for harness detection: pi sets `PI_CODING_AGENT=true` for its children.
 
 ## 5. Recovery (run at every session start, after bootstrap)
 
@@ -311,8 +253,7 @@ Write the brief per section 11.
 ### Spawn
 
 ```sh
-bin/fm-spawn.sh <id> projects/<repo>             # uses the active crewmate harness
-bin/fm-spawn.sh <id> projects/<repo> codex       # per-task harness override
+bin/fm-spawn.sh <id> projects/<repo>             # runs the crewmate on Claude Code
 bin/fm-spawn.sh <id> projects/<repo> --scout     # scout task; records kind=scout in meta
 bin/fm-spawn.sh <id1>=projects/<repo1> <id2>=projects/<repo2> [--scout]   # batch: one call, several tasks
 ```
@@ -320,7 +261,7 @@ bin/fm-spawn.sh <id1>=projects/<repo1> <id2>=projects/<repo2> [--scout]   # batc
 Dispatch several tasks in one call by passing `id=repo` pairs instead of a single `<id> <project>`; each pair is spawned through the same single-task path, a shared `--scout` applies to all, and the looping happens inside the script so you never hand-write a multi-task shell loop.
 If one pair fails, the rest still run and the batch exits non-zero.
 
-The script resolves the harness (`fm-harness.sh crew`), owns the verified launch templates, resolves the project's delivery mode (`fm-project-mode.sh`), and records `harness=`, `kind=`, `mode=`, and `yolo=` in the task's meta; a non-flag third argument containing whitespace is treated as a raw launch command (only for verifying new adapters).
+The script owns the verified Claude launch template, resolves the project's delivery mode (`fm-project-mode.sh`), and records `harness=`, `kind=`, `mode=`, and `yolo=` in the task's meta; a non-flag third argument containing whitespace is treated as a raw launch command (escape hatch).
 
 The script creates the crewmate terminal in its own worktree (under herdr: a herdr agent pane in a fresh worktree workspace; under tmux: a window that runs `treehouse get` and waits for the worktree subshell), installs the turn-end hook, records `state/<id>.meta`, and launches the agent with the brief.
 Worktrees start at detached HEAD on a clean default branch; ship briefs tell the crewmate to create its branch, while scout briefs keep the worktree scratch.
@@ -347,8 +288,8 @@ Pooled clones keep their local default refs frozen at clone time and can lag `or
 
 ### Validate
 
-For `no-mistakes`-mode ship tasks, when a crewmate's status says `done`, trigger validation using the crew's harness from `state/<id>.meta`.
-Use `/no-mistakes` for claude, `$no-mistakes` for codex; natural language also works.
+For `no-mistakes`-mode ship tasks, when a crewmate's status says `done`, trigger validation.
+Use `/no-mistakes` (or natural language).
 For example, with claude:
 
 ```sh
@@ -462,7 +403,7 @@ Silence is the correct state while a healthy background watcher is waiting.
 
 **Talk in outcomes, not mechanics.**
 Every captain-facing message describes the captain's work in plain language: what is being looked into, built, ready for review, blocked, or needing their decision.
-Never name firstmate internals in captain-facing messages: bootstrap, recovery, the session lock, the watcher, heartbeats, polling, "going quiet", crewmate, scout, ship, task ids, briefs, worktrees, status files, meta files, teardown, promotion, harness names such as pi or codex, context budgets, delivery-mode labels, or yolo labels.
+Never name firstmate internals in captain-facing messages: bootstrap, recovery, the session lock, the watcher, heartbeats, polling, "going quiet", crewmate, scout, ship, task ids, briefs, worktrees, status files, meta files, teardown, promotion, harness names, context budgets, delivery-mode labels, or yolo labels.
 Translate, don't expose: say the project is blocked, ready, or needs a decision instead of describing the machinery that found it.
 
 Reaches the captain immediately:
@@ -508,7 +449,7 @@ Every finished PR-based ship task lives on as its GitHub PR, every local-only sh
 ## 11. Crewmate briefs
 
 Scaffold with `bin/fm-brief.sh <id> <repo-name>` - it writes `data/<id>/brief.md` with the standard contract (branch setup, status-reporting protocol, push/merge rules, definition of done) and all paths filled in.
-For a ship task the definition of done is shaped by the project's delivery mode (section 6): `no-mistakes` ends in the harness-appropriate no-mistakes validation pipeline, `direct-PR` has the crewmate push and open the PR itself, `local-only` has it stop at "ready in branch" for firstmate to review and merge locally.
+For a ship task the definition of done is shaped by the project's delivery mode (section 6): `no-mistakes` ends in the no-mistakes validation pipeline, `direct-PR` has the crewmate push and open the PR itself, `local-only` has it stop at "ready in branch" for firstmate to review and merge locally.
 The scaffold reads the mode via `fm-project-mode.sh`, so you do not pass it.
 Ship briefs also include the project-memory contract: run `bin/fm-ensure-agents-md.sh` when the project already has agent-memory files or when the task produced durable project-intrinsic knowledge, then record proportionate learnings in `AGENTS.md`.
 For scout tasks add `--scout`: the scaffold swaps the definition of done for the report contract (findings to `data/<id>/report.md`, no branch, no push, no PR) and declares the worktree scratch; scout is mode-agnostic.
