@@ -74,6 +74,8 @@ state/               volatile runtime signals; gitignored
   .watch.lock .wake-queue.lock watcher singleton and queue serialization locks
   .hash-* .count-* .stale-* .seen-* .last-* .heartbeat-streak   watcher internals; never touch
   .last-watcher-beat watcher liveness beacon, touched every poll; fm-guard.sh reads it
+  .afk               durable away-mode flag; present = sub-supervisor may inject escalations (set by /afk, cleared on captain return)
+  .subsuper-* .supervise-daemon.*   sub-supervisor internals (stale markers, escalation buffer, seen-status dedup, log, lock, pid); never touch
 .no-mistakes/        local validation state and evidence; gitignored
 ```
 
@@ -128,9 +130,10 @@ Reconcile reality with your records before doing anything else:
 4. Read `data/backlog.md`, every `state/*.meta`, and every `state/*.status`.
 5. For a crewmate terminal with no meta (orphan): peek it, figure out what it is, ask the captain if unclear.
 6. For meta whose crewmate is gone (dead, e.g. its herdr pane is missing): salvage or report.
-7. Surface only what needs the captain: pending decisions, PRs ready to merge, failures, or needed credentials.
+7. If `state/.afk` is present (away-mode was active before the restart): re-enter afk - ensure the daemon is running (`nohup bin/fm-supervise-daemon.sh &` if its pid is dead or absent), do not arm the one-shot watcher (the daemon owns it), and resume away-mode supervision.
+8. Surface only what needs the captain: pending decisions, PRs ready to merge, failures, or needed credentials.
    If there is nothing that needs them, say nothing and resume.
-8. Handle drained wakes, then arm the watcher (section 8).
+9. Handle drained wakes, then arm the watcher (section 8) - unless afk was re-entered in step 7, in which case the daemon manages the watcher.
 
 A firstmate restart must be a non-event.
 All truth lives in herdr, the state files, data/backlog.md, and the worktrees; your conversation memory is a cache.
@@ -382,6 +385,36 @@ Silence is the correct state while a healthy background watcher is waiting.
    A low context reading is not wedging; modern harnesses auto-compact and keep going.
    The worktree and commits persist; this is cheap.
 5. Second relaunch fails too: write `failed` to backlog, tell the captain with evidence.
+
+### Sub-supervisor (presence-gated via `/afk`)
+
+`bin/fm-supervise-daemon.sh` is the away-mode engine: it wraps `fm-watch.sh`, runs the watcher as a child, classifies each wake reason in bash, and **self-handles the routine majority without consuming a firstmate turn**.
+Only captain-relevant events escalate - and even then as one pre-read, single-line, batched digest rather than a per-wake injection.
+It is the token-efficient layer for chat-mode / walk-away supervision.
+
+The daemon is **presence-gated**, neither default-on nor standalone: the token win and the behavior change are the same mechanism (bash triage instead of full LLM turns), so the boundary is **presence**.
+The `/afk` skill is the explicit trigger.
+
+**Entering afk.** Invoke the `/afk` skill.
+It sets `state/.afk` (durable - recovery re-enters afk if the flag survives a restart), ensures the daemon is running, and acknowledges.
+The daemon injects back into the captain's own herdr pane, which it finds via `HERDR_PANE_ID` (inherited when `/afk` launches it from the captain), overridable with `FM_SUPERVISOR_TARGET`.
+With afk active, do not separately arm `fm-watch.sh` - the daemon owns it; but `fm-wake-drain.sh` still runs at the start of every escalated turn as the lossless backstop.
+
+**Exiting afk (the captain's contract).** When firstmate receives a message while afk is active:
+- Leading `FM_INJECT_MARK` (ASCII unit separator, 0x1f) → **internal escalation**. Stay afk, process it.
+- Message starts with `/afk` → **afk re-invocation**. Stay afk (refresh the flag).
+- Anything else → **the captain is back.** Clear `state/.afk`, stop the daemon, flush one distilled "while you were out" catch-up (drain `state/.wake-queue` + summarize any pending `state/.subsuper-escalations`), and resume full per-wake responsiveness (arm `bin/fm-watch.sh`).
+**Bias ambiguous cases toward exit** (a present captain beats token savings; a false exit is self-correcting).
+The marker is in-band (it travels with the message text), so it does not depend on any herdr-level typed-vs-injected distinction.
+
+**Orthogonal to yolo.** afk changes how aggressively firstmate surfaces things, not who approves what. "Away" never means "approves more" - a PR, a needs-decision finding, or anything destructive still waits for the captain's explicit word.
+
+**Classification (per wake):** a `signal` whose status has no captain-relevant verb (`done:|needs-decision:|blocked:|failed:|PR ready|checks green|ready in branch|merged`) self-handles; a captain-relevant verb escalates. `check` always escalates. `stale` with a terminal status escalates; non-terminal stale records a marker and self-handles, and housekeeping escalates it as a possible wedge only after `FM_STALE_ESCALATE_SECS` (default 240s). `heartbeat` self-handles (the daemon runs its own cheap fleet scan every `FM_HEARTBEAT_SCAN_SECS`). Unknown or any uncertainty → escalate (fail-safe).
+
+**Injection (herdr).** Escalations buffer up to `FM_ESCALATE_BATCH_SECS` (default 90s; 0 = immediate) and flush as ONE single-line digest, sentinel-prefixed, via `herdr pane send-text` + `send-keys enter`.
+Before injecting, the daemon defers if the captain pane is busy (`pane_is_busy`, read from the pane) or its composer looks non-empty (`pane_input_pending`; herdr has no cursor API, so this is a best-effort read of the pane bottom).
+It types the digest once and retries Enter only (never retypes), confirming via turn-started (pane busy) or a cleared composer, so a swallowed Enter cannot concatenate two digests.
+Reliability shell preserved: portable mkdir lock, crash-loop backoff, pane-gone guard, signal-trapped shutdown that flushes before exit; the `.wake-queue` + `fm-wake-drain.sh` recover any missed injection. `FM_INJECT_SKIP` (default `heartbeat`) force-self-handles matching kinds - use sparingly.
 
 ## 9. Escalation and captain etiquette
 

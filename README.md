@@ -114,6 +114,7 @@ Each crewmate is a herdr agent pane in its own worktree workspace; watch any of 
   Detected wakes are also written to a durable local queue (`state/.wake-queue`) before detector state advances, so a missed one-shot process exit can be recovered by draining the queue.
   Routine watcher polling, restarts, elapsed waiting time, and unchanged heartbeat reviews stay silent; an idle crew costs you nothing.
   A pull-based guard (`bin/fm-guard.sh`) warns through supervision tool output if tasks are in flight and that watcher stops running or queued wakes are waiting to be drained.
+- **Away-mode (`/afk`)** - an optional sub-supervisor (`bin/fm-supervise-daemon.sh`) wraps the watcher, self-handles routine wakes in bash, and escalates only captain-relevant events as one batched, single-line digest injected into the captain's herdr pane - cutting supervision token cost while you step away. It is presence-gated: the `/afk` skill turns it on, and the first genuine message turns it back off.
 - **Worktrees, not branches in your checkout** - crewmates never touch your clone; each gets its own herdr git worktree so parallel tasks on one repo cannot collide.
 - **Two task shapes** - ship tasks change projects and ship by project mode (`no-mistakes`, `direct-PR`, or `local-only`); scout tasks investigate, plan, reproduce bugs, or audit, then leave a report at `data/<id>/report.md` and never push.
 - **Project modes are explicit** - `data/projects.md` records each project's delivery mode and optional `+yolo` autonomy flag.
@@ -140,6 +141,7 @@ The first mate drives these; you rarely need to, but they work by hand too.
 | `fm-review-diff.sh`      | Review a crewmate branch against the authoritative base, with optional `--stat` output                              |
 | `fm-watch.sh`            | Singleton-safe one-shot watcher; blocks until supervision work is due, queues it durably, then exits with one reason line |
 | `fm-wake-drain.sh`       | Atomically drain queued watcher wakes before handling supervision work                                              |
+| `fm-supervise-daemon.sh` | Optional away-mode sub-supervisor: wraps the watcher, self-handles routine wakes, escalates only captain-relevant events as one batched herdr-pane digest; presence-gated by `/afk` |
 | `fm-send.sh`             | Send one literal line (or `--key Escape`) to a crewmate window                                                      |
 | `fm-peek.sh`             | Print a bounded tail of a crewmate pane                                                                             |
 | `fm-pr-check.sh`         | Record a PR-ready task and arm the watcher's merge poll                                                             |
@@ -165,6 +167,16 @@ FM_GUARD_GRACE=300      # seconds a stale watcher beacon may age before guard wa
 FM_SIGNAL_GRACE=30      # seconds to coalesce nearby status and turn-end signals into one wake
 FM_FLEET_PRUNE=1        # set to 0 to skip pruning local branches whose upstream is gone
 FM_BUSY_REGEX='esc to interrupt'   # Claude's busy-pane signature
+```
+
+Sub-supervisor (`fm-supervise-daemon.sh`, away-mode) knobs:
+
+```sh
+FM_SUPERVISOR_TARGET    # captain's herdr pane id (else auto-discovered from HERDR_PANE_ID)
+FM_STALE_ESCALATE_SECS=240   # idle seconds before a stale pane escalates as a possible wedge
+FM_ESCALATE_BATCH_SECS=90    # buffer window for batched escalation digests; 0 = flush immediately
+FM_HEARTBEAT_SCAN_SECS=300   # cadence of the catch-all status scan
+FM_INJECT_SKIP=heartbeat     # |-separated wake prefixes to force-self-handle
 ```
 
 ## Development
