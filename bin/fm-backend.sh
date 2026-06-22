@@ -122,8 +122,9 @@ herdr_spawn() {
 
 # herdr pane read prints the rendered screen text directly (not JSON); pass it through as-is.
 herdr_read()     { herdr pane read "$1" --source visible --lines "${2:-40}"; }
-herdr_send()     { local h=$1; shift; herdr pane send-text "$h" "$*" >/dev/null; herdr pane send-keys "$h" enter >/dev/null; }
-herdr_send_key() { herdr pane send-keys "$1" "$(_herdr_key "$2")" >/dev/null; }
+herdr_send()      { local h=$1; shift; herdr pane send-text "$h" "$*" >/dev/null; herdr pane send-keys "$h" enter >/dev/null; }
+herdr_send_text() { herdr pane send-text "$1" "$2" >/dev/null; }
+herdr_send_key()  { herdr pane send-keys "$1" "$(_herdr_key "$2")" >/dev/null; }
 herdr_state()    { local s; s=$(herdr agent get "$1" 2>/dev/null | _jget result.agent.agent_status); [ -n "$s" ] && echo "$s" || echo unknown; }
 herdr_list()     { herdr agent list 2>/dev/null | python3 -c 'import sys,json
 try: a=json.load(sys.stdin)["result"]["agents"]
@@ -154,11 +155,12 @@ case "$FM_BACKEND" in
       spawn)    herdr_spawn "$@" ;;
       read)     herdr_read "$@" ;;
       send)     herdr_send "$@" ;;
+      send-text) herdr_send_text "$@" ;;
       send-key) herdr_send_key "$@" ;;
       state)    herdr_state "$@" ;;
       list)     herdr_list ;;
       kill)     herdr_kill "$@" ;;
-      *) echo "fm-backend: unknown op '$op' (open|launch|spawn|read|send|send-key|state|list|kill)" >&2; exit 2 ;;
+      *) echo "fm-backend: unknown op '$op' (open|launch|spawn|read|send|send-text|send-key|state|list|kill)" >&2; exit 2 ;;
     esac
     ;;
   tmux)
