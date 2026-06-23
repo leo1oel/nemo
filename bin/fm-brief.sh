@@ -19,22 +19,90 @@
 # Refuses to overwrite an existing brief.
 set -eu
 
-FM_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+FM_ROOT="${FM_ROOT_OVERRIDE:-$(cd "$SCRIPT_DIR/.." && pwd)}"
+# Operational dirs come from the active home: a secondmate scaffolds briefs in its own
+# home, so honor FM_HOME / FM_DATA_OVERRIDE / FM_STATE_OVERRIDE rather than FM_ROOT.
+FM_HOME="${FM_HOME:-${FM_ROOT_OVERRIDE:-$FM_ROOT}}"
+DATA="${FM_DATA_OVERRIDE:-$FM_HOME/data}"
+STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
 KIND=ship
 POS=()
 for a in "$@"; do
   case "$a" in
     --scout) KIND=scout ;;
+    --secondmate) KIND=secondmate ;;
     *) POS+=("$a") ;;
   esac
 done
-[ "${#POS[@]}" -ge 2 ] || { echo "usage: fm-brief.sh <task-id> <repo-name> [--scout]" >&2; exit 2; }
+[ "${#POS[@]}" -ge 1 ] || { echo "usage: fm-brief.sh <task-id> <repo-name> [--scout]" >&2; echo "       fm-brief.sh <task-id> --secondmate <project>..." >&2; exit 2; }
 ID=${POS[0]}
-REPO=${POS[1]}
 
-BRIEF="$FM_ROOT/data/$ID/brief.md"
+BRIEF="$DATA/$ID/brief.md"
 [ -e "$BRIEF" ] && { echo "error: $BRIEF already exists" >&2; exit 1; }
-mkdir -p "$FM_ROOT/data/$ID"
+mkdir -p "$DATA/$ID"
+
+# A secondmate's brief is a charter: a persistent domain scope, the project clones it
+# supervises, the idle-by-default contract, and escalation back to the main firstmate's
+# status file. It carries no worktree/branch setup because its workspace is a whole
+# firstmate home, not a task worktree.
+if [ "$KIND" = secondmate ]; then
+SECONDMATE_PROJECTS=""
+idx=1
+while [ "$idx" -lt "${#POS[@]}" ]; do
+  SECONDMATE_PROJECTS="${SECONDMATE_PROJECTS}${SECONDMATE_PROJECTS:+ }${POS[$idx]}"
+  idx=$((idx + 1))
+done
+[ -n "$SECONDMATE_PROJECTS" ] || { echo "error: --secondmate requires at least one project" >&2; exit 1; }
+SECONDMATE_CHARTER=${FM_SECONDMATE_CHARTER:-"{TASK}"}
+SECONDMATE_SCOPE=${FM_SECONDMATE_SCOPE:-${FM_SECONDMATE_CHARTER:-"{TASK}"}}
+PROJECT_LIST=$(printf '%s\n' "$SECONDMATE_PROJECTS" | tr ' ' '\n' | sed 's/^/- /')
+cat > "$BRIEF" <<EOF
+You are a secondmate: a persistent domain supervisor managed by the main firstmate. Work on your own; do not wait for a human.
+
+# Charter
+$SECONDMATE_CHARTER
+
+# Routing scope
+$SECONDMATE_SCOPE
+
+# Project clones
+$PROJECT_LIST
+
+# Operating model
+You are in an isolated firstmate home. The local \`AGENTS.md\` is your job description, and your local \`data/\`, \`state/\`, \`config/\`, and \`projects/\` dirs are yours to operate.
+The projects above are local clones for work you supervise; they are not an exclusive ownership claim.
+Delegate project work to your own crewmates with the normal firstmate lifecycle: brief, spawn, status, watcher, steer, teardown, and recovery.
+Do not invent a second delegation system.
+You do not generate your own work.
+Act only on tasks the main firstmate routes to you.
+Never start a survey, audit, or "find improvements" sweep on your own initiative; that is not your job and it is unwanted.
+
+# Escalation to main firstmate
+Handle routine work yourself.
+Escalate only true captain-relevant outcomes by appending one line:
+   \`echo "{state}: {one short line}" >> $STATE/$ID.status\`
+States: working, needs-decision, blocked, done, failed.
+Use this only for material phase changes, a captain decision, a real blocker, a failure, or work ready for review.
+Routine internal supervision, heartbeats, retries, and crewmate churn stay inside your own home and must not touch that status file.
+
+# Definition of done
+You are persistent by default. Do not exit just because your queue is empty.
+On startup and restart, run normal firstmate recovery for your own home, but only to RECONCILE work that is already yours: in-flight crewmates, tracked backlog items, and durable watches recorded in this home.
+When you have no assigned or in-flight work after that reconciliation, go idle and wait silently for the main firstmate to route you a task.
+An empty queue is a healthy resting state, not a cue to invent work: never spawn a survey, audit, or any self-directed "find work" task on your own initiative.
+If this charter cannot be carried out, append \`blocked: {why}\` or \`failed: {why}\` to the main status file and stop.
+EOF
+if [ "$SECONDMATE_CHARTER" = "{TASK}" ]; then
+  echo "scaffolded: $BRIEF (secondmate charter; replace {TASK})"
+else
+  echo "scaffolded: $BRIEF (secondmate charter)"
+fi
+exit 0
+fi
+
+[ "${#POS[@]}" -ge 2 ] || { echo "usage: fm-brief.sh <task-id> <repo-name> [--scout]" >&2; exit 2; }
+REPO=${POS[1]}
 
 if [ "$KIND" = scout ]; then
 cat > "$BRIEF" <<EOF
@@ -54,7 +122,7 @@ The report is the only thing that survives, so anything worth keeping must be in
 2. Stay inside this worktree; the only files you may write outside it are the report and the status file below.
 3. Use gh-axi for GitHub operations and chrome-devtools-axi for browser operations.
 4. Report status by appending one line:
-   \`echo "{state}: {one short line}" >> $FM_ROOT/state/$ID.status\`
+   \`echo "{state}: {one short line}" >> $STATE/$ID.status\`
    States: working, needs-decision, blocked, done, failed.
    Each append wakes firstmate, so report sparingly: only phase changes a supervisor
    would act on and the needs-decision/blocked/done/failed states. No step-by-step
@@ -64,7 +132,7 @@ The report is the only thing that survives, so anything worth keeping must be in
    append \`needs-decision: {summary of options}\` and stop. Firstmate will reply with the decision.
 
 # Definition of done
-Write your findings to \`$FM_ROOT/data/$ID/report.md\`.
+Write your findings to \`$DATA/$ID/report.md\`.
 The report must stand alone: what you did, what you found, the evidence (commands run, output, file:line references), and what you recommend.
 When the report is complete, append \`done: {one-line conclusion}\` to the status file and stop.
 If your findings reveal work that should ship (e.g. you reproduced a bug and the fix is clear), say so in the report; firstmate may promote this task in place, and you would then receive mode-specific ship instructions as a follow-up message.
@@ -136,7 +204,7 @@ $RULE1
 2. Stay inside this worktree; modify nothing outside it.
 3. Use gh-axi for GitHub operations and chrome-devtools-axi for browser operations.
 4. Report status by appending one line:
-   \`echo "{state}: {one short line}" >> $FM_ROOT/state/$ID.status\`
+   \`echo "{state}: {one short line}" >> $STATE/$ID.status\`
    States: working, needs-decision, blocked, done, failed.
    Each append wakes firstmate, so report sparingly: only phase changes a supervisor
    would act on (setup done, bug reproduced, fix implemented, validation passed) and the

@@ -22,7 +22,11 @@
 set -eu
 
 FM_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-REG="$FM_ROOT/data/projects.md"
+# Operational data comes from the active home: secondmates run this from their own
+# FM_HOME, so honor FM_HOME / FM_DATA_OVERRIDE rather than always reading FM_ROOT.
+FM_HOME="${FM_HOME:-${FM_ROOT_OVERRIDE:-$FM_ROOT}}"
+DATA="${FM_DATA_OVERRIDE:-$FM_HOME/data}"
+REG="$DATA/projects.md"
 NAME=${1:?usage: fm-project-mode.sh <project-name>}
 
 if [ ! -f "$REG" ]; then

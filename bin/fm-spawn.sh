@@ -1,10 +1,14 @@
 #!/usr/bin/env bash
-# Spawn a crewmate: a herdr worktree workspace -> agent launched in it with its brief.
+# Spawn a direct report: a crewmate in a herdr worktree workspace, or a persistent
+# secondmate in its isolated firstmate home.
 # Usage: fm-spawn.sh <task-id> <project-dir> [launch-command] [--scout]
-#   This fork is Claude-only: with no third arg the crewmate runs Claude Code. A non-flag
+#        fm-spawn.sh <task-id> [<firstmate-home>] [launch-command] --secondmate
+#   This fork is Claude-only: with no launch arg the agent runs Claude Code. A non-flag
 #   string containing whitespace is treated as a RAW launch command (escape hatch).
 #   --scout records kind=scout in the task's meta (report deliverable, scratch worktree;
-#   see AGENTS.md section 7); the default is kind=ship.
+#   see AGENTS.md section 7). --secondmate records kind=secondmate and launches in a
+#   provisioned firstmate home (a herdr worktree of $FM_ROOT seeded by fm-home-seed.sh);
+#   the default is kind=ship.
 # Batch dispatch: pass one or more `id=repo` pairs instead of a single <id> <project>, e.g.
 #     fm-spawn.sh fix-a-k3=projects/foo add-b-q7=projects/bar [--scout]
 #   Each pair re-execs this script in single-task mode, so the single path stays the only
@@ -12,14 +16,26 @@
 #   so callers never hand-write a multi-task shell loop (the tool shell is zsh, which does
 #   not word-split unquoted $vars and silently breaks ad-hoc `for ... in $pairs` loops).
 #   The launch template lives in launch_template() below; the only placeholder is:
-#     __BRIEF__    absolute path to data/<task-id>/brief.md
+#     __BRIEF__    absolute path to data/<task-id>/brief.md (or the home's data/charter.md
+#                  for a secondmate)
 # The Claude turn-end hook (a Stop hook in the worktree's .claude/settings.local.json) is
-# installed automatically.
-# On success prints: spawned <id> harness=<name> kind=<ship|scout> mode=<mode> yolo=<on|off> handle=<pane> worktree=<path>
-# mode/yolo are resolved per-project from data/projects.md via fm-project-mode.sh.
+# installed automatically for crewmate tasks; secondmates run their own watcher in their
+# home and are supervised through status writes, not pane-idle staleness, so they get none.
+# On success prints: spawned <id> harness=<name> kind=<ship|scout|secondmate> mode=<mode> yolo=<on|off> handle=<pane> worktree=<path>
+# mode/yolo are resolved per-project from data/projects.md for ship/scout tasks; a secondmate
+# spawn records mode=secondmate, yolo=off, home=, home_workspace=, and projects=.
 set -eu
 
-FM_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+FM_ROOT="${FM_ROOT_OVERRIDE:-$(cd "$SCRIPT_DIR/.." && pwd)}"
+# Operational dirs come from the active home so a secondmate (its own FM_HOME) spawns its
+# own crewmates against its own state/data/projects. bin/ still resolves from the repo.
+FM_HOME="${FM_HOME:-${FM_ROOT_OVERRIDE:-$FM_ROOT}}"
+STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
+DATA="${FM_DATA_OVERRIDE:-$FM_HOME/data}"
+PROJECTS="${FM_PROJECTS_OVERRIDE:-$FM_HOME/projects}"
+SUB_HOME_MARKER=".fm-secondmate-home"
+SUB_HOME_WS_MARKER=".fm-secondmate-home.workspace"
 # Skip the watcher guard when re-exec'd for one pair of a batch (FM_SPAWN_NO_GUARD is
 # set by the batch loop below), so the guard runs once for the batch, not once per pair.
 [ -n "${FM_SPAWN_NO_GUARD:-}" ] || "$FM_ROOT/bin/fm-guard.sh" || true
@@ -28,6 +44,7 @@ POS=()
 for a in "$@"; do
   case "$a" in
     --scout) KIND=scout ;;
+    --secondmate) KIND=secondmate ;;
     *) POS+=("$a") ;;
   esac
 done
@@ -47,7 +64,11 @@ if [ "${#POS[@]}" -gt 0 ] && [ "${POS[0]}" != "$idpart" ] && case "$idpart" in *
       *=*) : ;;
       *) echo "error: batch dispatch expects every argument as id=repo; got '$pair'" >&2; rc=2; continue ;;
     esac
-    if [ "$KIND" = scout ]; then
+    if [ "$KIND" = secondmate ]; then
+      echo "error: batch dispatch does not support --secondmate; spawn each secondmate explicitly" >&2
+      rc=2
+      continue
+    elif [ "$KIND" = scout ]; then
       if FM_SPAWN_NO_GUARD=1 "$FM_ROOT/bin/fm-spawn.sh" "${pair%%=*}" "${pair#*=}" --scout; then :; else echo "batch: FAILED to spawn ${pair%%=*} (${pair#*=})" >&2; rc=1; fi
     else
       if FM_SPAWN_NO_GUARD=1 "$FM_ROOT/bin/fm-spawn.sh" "${pair%%=*}" "${pair#*=}"; then :; else echo "batch: FAILED to spawn ${pair%%=*} (${pair#*=})" >&2; rc=1; fi
@@ -55,10 +76,39 @@ if [ "${#POS[@]}" -gt 0 ] && [ "${POS[0]}" != "$idpart" ] && case "$idpart" in *
   done
   exit "$rc"
 fi
-[ "${#POS[@]}" -ge 2 ] || { echo "usage: fm-spawn.sh <task-id> <project-dir> [launch-command] [--scout]   (or several id=repo pairs)" >&2; exit 2; }
+[ "${#POS[@]}" -ge 1 ] || { echo "usage: fm-spawn.sh <task-id> <project-dir> [launch-command] [--scout]   (or several id=repo pairs, or <task-id> [<firstmate-home>] --secondmate)" >&2; exit 2; }
 ID=${POS[0]}
-PROJ=${POS[1]}
-ARG3=${POS[2]:-}
+PROJ=
+ARG3=
+FIRSTMATE_HOME=
+
+if [ "$KIND" = secondmate ]; then
+  # <id> [<home>] [launch] --secondmate. The home arg is optional: when absent it is
+  # resolved from the recorded meta (recovery) or the data/secondmates.md registry. A
+  # bare launch adapter name or a whitespace raw launch command is distinguished from a
+  # home path the same way upstream does.
+  case "${POS[1]:-}" in
+    ''|claude)
+      ARG3=${POS[1]:-}
+      ;;
+    *' '*)
+      if [ "${#POS[@]}" -gt 2 ] || [ -d "${POS[1]}" ]; then
+        FIRSTMATE_HOME=${POS[1]}
+        ARG3=${POS[2]:-}
+      else
+        ARG3=${POS[1]}
+      fi
+      ;;
+    *)
+      FIRSTMATE_HOME=${POS[1]}
+      ARG3=${POS[2]:-}
+      ;;
+  esac
+else
+  [ "${#POS[@]}" -ge 2 ] || { echo "usage: fm-spawn.sh <task-id> <project-dir> [launch-command] [--scout]   (or several id=repo pairs)" >&2; exit 2; }
+  PROJ=${POS[1]}
+  ARG3=${POS[2]:-}
+fi
 
 # The verified launch command per adapter. The knowledge half of each adapter
 # (busy signature, exit command, dialogs, quirks) lives in AGENTS.md section 4.
@@ -88,9 +138,231 @@ case "$ARG3" in
     ;;
 esac
 
-BRIEF="$FM_ROOT/data/$ID/brief.md"
+BACKEND="$FM_ROOT/bin/fm-backend.sh"
+
+# Shared herdr json helper (mirrors bin/fm-backend.sh _jget).
+_jget() {
+  python3 -c '
+import sys, json
+path = [p for p in sys.argv[1].split(".") if p != ""]
+try:
+    d = json.load(sys.stdin)
+except Exception:
+    sys.exit(0)
+for k in path:
+    if isinstance(d, list):
+        try: d = d[int(k)]
+        except (ValueError, IndexError): d = None
+    elif isinstance(d, dict):
+        d = d.get(k)
+    else:
+        d = None
+    if d is None:
+        break
+sys.stdout.write("" if d is None else str(d))
+' "$1"
+}
+
+# Read a field off a secondmate's data/secondmates.md registry line.
+secondmate_registry_value() {
+  local id=$1 key=$2 reg line value
+  reg="$DATA/secondmates.md"
+  [ -f "$reg" ] || return 1
+  line=$(grep -E "^- $id( |$)" "$reg" | tail -1 || true)
+  [ -n "$line" ] || return 1
+  case "$key" in
+    home) value=$(printf '%s\n' "$line" | sed -n 's/^[^(]*(home: \([^;)]*\);.*/\1/p') ;;
+    projects) value=$(printf '%s\n' "$line" | sed -n 's/^[^(]*(home: [^;)]*; scope: [^;)]*; projects: \([^;)]*\); added .*/\1/p') ;;
+    *) return 1 ;;
+  esac
+  [ -n "$value" ] || return 1
+  printf '%s\n' "$value"
+}
+
+shell_quote() {
+  printf "'"
+  printf '%s' "$1" | sed "s/'/'\\\\''/g"
+  printf "'"
+}
+
+resolved_existing_dir() {
+  local path=$1
+  [ -d "$path" ] || { echo "error: firstmate home does not exist or is not a directory: $path" >&2; return 1; }
+  cd "$path" && pwd -P
+}
+
+path_is_ancestor_of() {
+  local ancestor=$1 path=$2
+  [ -n "$ancestor" ] || return 1
+  [ -n "$path" ] || return 1
+  [ "$ancestor" != "$path" ] || return 1
+  case "$path" in
+    "$ancestor"/*) return 0 ;;
+  esac
+  return 1
+}
+
+validate_firstmate_operational_dirs() {
+  local abs_home=$1 abs_active_home=$2 abs_root=$3 name dir abs_dir
+  for name in data state config projects; do
+    dir="$abs_home/$name"
+    if [ -L "$dir" ] && [ ! -e "$dir" ]; then
+      echo "error: secondmate $name directory must resolve inside the secondmate home: $dir" >&2
+      return 1
+    fi
+    if [ -d "$dir" ]; then
+      abs_dir=$(cd "$dir" && pwd -P)
+    elif [ -e "$dir" ]; then
+      echo "error: secondmate $name path is not a directory: $dir" >&2
+      return 1
+    else
+      abs_dir="$abs_home/$name"
+    fi
+    if ! path_is_ancestor_of "$abs_home" "$abs_dir"; then
+      echo "error: secondmate $name directory must resolve inside the secondmate home: $dir" >&2
+      return 1
+    fi
+    if [ "$abs_dir" = "$abs_active_home" ] || path_is_ancestor_of "$abs_active_home" "$abs_dir"; then
+      echo "error: secondmate $name directory cannot be inside the active firstmate home: $dir" >&2
+      return 1
+    fi
+    if [ "$abs_dir" = "$abs_root" ] || path_is_ancestor_of "$abs_root" "$abs_dir"; then
+      echo "error: secondmate $name directory cannot be inside the firstmate repo: $dir" >&2
+      return 1
+    fi
+  done
+}
+
+validate_firstmate_home_for_spawn() {
+  local id=$1 home=$2 abs_home abs_active_home abs_root marker_id
+  abs_home=$(resolved_existing_dir "$home") || return 1
+  abs_active_home=$(resolved_existing_dir "$FM_HOME")
+  abs_root=$(resolved_existing_dir "$FM_ROOT")
+  if [ "$abs_home" = "/" ]; then
+    echo "error: secondmate home cannot be the filesystem root: $home" >&2
+    return 1
+  fi
+  if [ "$abs_home" = "$abs_active_home" ]; then
+    echo "error: secondmate home cannot be the active firstmate home: $home" >&2
+    return 1
+  fi
+  if [ "$abs_home" = "$abs_root" ]; then
+    echo "error: secondmate home cannot be the firstmate repo: $home" >&2
+    return 1
+  fi
+  if path_is_ancestor_of "$abs_active_home" "$abs_home"; then
+    echo "error: secondmate home cannot be inside the active firstmate home: $home" >&2
+    return 1
+  fi
+  if path_is_ancestor_of "$abs_root" "$abs_home"; then
+    echo "error: secondmate home cannot be inside the firstmate repo: $home" >&2
+    return 1
+  fi
+  if path_is_ancestor_of "$abs_home" "$abs_active_home"; then
+    echo "error: secondmate home cannot be an ancestor of the active firstmate home: $home" >&2
+    return 1
+  fi
+  if path_is_ancestor_of "$abs_home" "$abs_root"; then
+    echo "error: secondmate home cannot be an ancestor of the firstmate repo: $home" >&2
+    return 1
+  fi
+  validate_firstmate_operational_dirs "$abs_home" "$abs_active_home" "$abs_root" || return 1
+  if [ ! -f "$abs_home/$SUB_HOME_MARKER" ]; then
+    echo "error: firstmate home $home is not a seeded secondmate home" >&2
+    return 1
+  fi
+  marker_id=$(cat "$abs_home/$SUB_HOME_MARKER" 2>/dev/null || true)
+  if [ "$marker_id" != "$id" ]; then
+    echo "error: firstmate home $home is marked for secondmate ${marker_id:-unknown}, expected $id" >&2
+    return 1
+  fi
+  if [ ! -f "$abs_home/AGENTS.md" ]; then
+    echo "error: $home is not a firstmate home (missing AGENTS.md)" >&2
+    return 1
+  fi
+  if [ ! -d "$abs_home/bin" ]; then
+    echo "error: $home is not a firstmate home (missing bin/)" >&2
+    return 1
+  fi
+  printf '%s\n' "$abs_home"
+}
+
+if [ "$KIND" = secondmate ]; then
+  # Resolve the home: explicit arg, recorded meta (recovery), or the registry.
+  if [ -z "$FIRSTMATE_HOME" ] && [ -f "$STATE/$ID.meta" ]; then
+    FIRSTMATE_HOME=$(grep '^home=' "$STATE/$ID.meta" | cut -d= -f2- || true)
+  fi
+  if [ -z "$FIRSTMATE_HOME" ]; then
+    FIRSTMATE_HOME=$(secondmate_registry_value "$ID" home || true)
+  fi
+  [ -n "$FIRSTMATE_HOME" ] || { echo "error: no firstmate home supplied or registered for $ID" >&2; exit 1; }
+  HOME_PATH=$(validate_firstmate_home_for_spawn "$ID" "$FIRSTMATE_HOME") || exit 1
+  # The home's workspace, if it was provisioned by herdr (the `-` seed path). Recorded
+  # beside the marker; a plain directory home has none, so spawn opens one on the fly.
+  HOME_WORKSPACE=$(cat "$HOME_PATH/$SUB_HOME_WS_MARKER" 2>/dev/null || true)
+  WT="$HOME_PATH"
+  if [ -f "$HOME_PATH/data/charter.md" ]; then
+    BRIEF="$HOME_PATH/data/charter.md"
+  else
+    BRIEF="$DATA/$ID/brief.md"
+  fi
+  [ -f "$BRIEF" ] || { echo "error: no charter/brief at $BRIEF" >&2; exit 1; }
+
+  # A secondmate is launched in its home: reuse the home's herdr workspace when it was
+  # herdr-provisioned, else open a fresh workspace rooted at the home directory. No
+  # worktree create (the home IS the workspace), no turn-end hook (the secondmate runs
+  # its own watcher and is supervised through status writes), no fleet sync.
+  if [ -n "$HOME_WORKSPACE" ]; then
+    WS=$HOME_WORKSPACE
+  else
+    WSJSON=$(herdr workspace create --cwd "$HOME_PATH" --label "sm-$ID" --no-focus --json 2>/dev/null) \
+      || { echo "error: 'herdr workspace create' failed for secondmate $ID home $HOME_PATH" >&2; exit 1; }
+    WS=$(printf '%s' "$WSJSON" | _jget result.workspace.workspace_id)
+    [ -n "$WS" ] || WS=$(printf '%s' "$WSJSON" | _jget result.workspace_id)
+    [ -n "$WS" ] || { echo "error: could not parse 'herdr workspace create' output (workspace id missing)" >&2; printf '%s\n' "$WSJSON" >&2; exit 1; }
+  fi
+
+  MODE=secondmate
+  YOLO=off
+  SECONDMATE_PROJECTS=$(secondmate_registry_value "$ID" projects || true)
+
+  # The secondmate runs as a firstmate in its own home: point its operational env at the
+  # home so its own fm-* calls resolve there, and use the same launch-template path.
+  BRIEF_Q=$(shell_quote "$BRIEF")
+  HOME_Q=$(shell_quote "$HOME_PATH")
+  LAUNCH=${LAUNCH//__BRIEF__/$BRIEF_Q}
+  LAUNCH="FM_ROOT_OVERRIDE= FM_STATE_OVERRIDE= FM_DATA_OVERRIDE= FM_PROJECTS_OVERRIDE= FM_HOME=$HOME_Q $LAUNCH"
+
+  LAUNCHED=$("$BACKEND" launch "$ID" "$WS" "$HOME_PATH" "$LAUNCH") \
+    || { echo "error: 'fm-backend launch' failed for secondmate $ID" >&2; exit 1; }
+  HANDLE=$(printf '%s\n' "$LAUNCHED" | sed -n 's/^handle=//p')
+  [ -n "$HANDLE" ] || { echo "error: 'fm-backend launch' returned no handle" >&2; exit 1; }
+
+  mkdir -p "$STATE"
+  {
+    echo "handle=$HANDLE"
+    echo "workspace=$WS"
+    echo "worktree=$HOME_PATH"
+    echo "project=$HOME_PATH"
+    echo "harness=$HARNESS"
+    echo "kind=$KIND"
+    echo "mode=$MODE"
+    echo "yolo=$YOLO"
+    echo "home=$HOME_PATH"
+    echo "home_workspace=$WS"
+    echo "projects=$SECONDMATE_PROJECTS"
+  } > "$STATE/$ID.meta"
+
+  echo "spawned $ID harness=$HARNESS kind=$KIND mode=$MODE yolo=$YOLO handle=$HANDLE worktree=$HOME_PATH"
+  exit 0
+fi
+
+BRIEF="$DATA/$ID/brief.md"
 [ -f "$BRIEF" ] || { echo "error: no brief at $BRIEF" >&2; exit 1; }
-PROJ_ABS="$(cd "$PROJ" && pwd)"
+case "$PROJ" in
+  projects/*) PROJ_ABS="$(cd "$PROJECTS/${PROJ#projects/}" && pwd)" ;;
+  *) PROJ_ABS="$(cd "$PROJ" && pwd)" ;;
+esac
 
 # Refresh this project's clone so the crewmate branches off current code (this replaces the
 # session-start fleet refresh the old bootstrap did). Best-effort and non-fatal.
@@ -99,7 +371,6 @@ PROJ_ABS="$(cd "$PROJ" && pwd)"
 # Create the crewmate's worktree (a herdr worktree workspace) before the turn-end hook
 # below is written into it. $WT is the worktree path, $WS its herdr workspace id, $RP the
 # spare root pane the launch step will replace.
-BACKEND="$FM_ROOT/bin/fm-backend.sh"
 OPENED=$("$BACKEND" open "$ID" "$PROJ_ABS") \
   || { echo "error: 'fm-backend open' failed for $ID" >&2; exit 1; }
 WT=$(printf '%s\n' "$OPENED" | sed -n 's/^worktree=//p')
@@ -110,7 +381,7 @@ RP=$(printf '%s\n' "$OPENED" | sed -n 's/^rootpane=//p')
 # Per-harness turn-end hook: a file that touches state/<id>.turn-ended when the
 # agent finishes a turn. Worktree-resident hooks are kept out of git's view so
 # they never block teardown's dirty check or leak into a commit.
-TURNEND="$FM_ROOT/state/$ID.turn-ended"
+TURNEND="$STATE/$ID.turn-ended"
 exclude_path() {
   local rel=$1 EXCL
   EXCL=$(git -C "$WT" rev-parse --git-path info/exclude 2>/dev/null || true)
@@ -146,7 +417,7 @@ LAUNCHED=$("$BACKEND" launch "$ID" "$WS" "$WT" "$LAUNCH" "$RP") \
 HANDLE=$(printf '%s\n' "$LAUNCHED" | sed -n 's/^handle=//p')
 [ -n "$HANDLE" ] || { echo "error: 'fm-backend launch' returned no handle" >&2; exit 1; }
 
-mkdir -p "$FM_ROOT/state"
+mkdir -p "$STATE"
 {
   echo "handle=$HANDLE"
   echo "workspace=$WS"
@@ -156,6 +427,6 @@ mkdir -p "$FM_ROOT/state"
   echo "kind=$KIND"
   echo "mode=$MODE"
   echo "yolo=$YOLO"
-} > "$FM_ROOT/state/$ID.meta"
+} > "$STATE/$ID.meta"
 
 echo "spawned $ID harness=$HARNESS kind=$KIND mode=$MODE yolo=$YOLO handle=$HANDLE worktree=$WT"

@@ -12,7 +12,10 @@ set -u
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 FM_ROOT="${FM_ROOT_OVERRIDE:-$(cd "$SCRIPT_DIR/.." && pwd)}"
-STATE="${FM_STATE_OVERRIDE:-$FM_ROOT/state}"
+# A secondmate runs its own watcher in its own home, so resolve the state dir from the
+# active home (FM_HOME / FM_STATE_OVERRIDE), not always from the repo.
+FM_HOME="${FM_HOME:-${FM_ROOT_OVERRIDE:-$FM_ROOT}}"
+STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
 mkdir -p "$STATE"
 
 # shellcheck source=bin/fm-wake-lib.sh
@@ -192,6 +195,9 @@ EOF
   for meta in "$STATE"/*.meta; do
     [ -e "$meta" ] || continue
     id=$(basename "$meta" .meta)
+    # A secondmate idling on its own watcher is healthy. Its parent supervises it
+    # through status writes and heartbeats, not pane-idle staleness, so skip it here.
+    [ "$(sed -n 's/^kind=//p' "$meta")" = secondmate ] && continue
     hl=$(sed -n 's/^handle=//p' "$meta")
     [ -n "$hl" ] || continue
     tail40=$("$SCRIPT_DIR/fm-backend.sh" read "$hl" 40 2>/dev/null) || continue

@@ -119,10 +119,16 @@ Each crewmate is a herdr agent pane in its own worktree workspace; watch any of 
 - **Two task shapes** - ship tasks change projects and ship by project mode (`no-mistakes`, `direct-PR`, or `local-only`); scout tasks investigate, plan, reproduce bugs, or audit, then leave a report at `data/<id>/report.md` and never push.
 - **Project modes are explicit** - `data/projects.md` records each project's delivery mode and optional `+yolo` autonomy flag.
   `no-mistakes` projects run the full validation pipeline, `direct-PR` projects open PRs without that pipeline, and `local-only` projects stay local until firstmate performs an approved fast-forward merge.
+- **Optional secondmates** - for larger fleets, `data/secondmates.md` records persistent domain supervisors with natural-language scopes, project clone lists, and home paths.
+  A secondmate is a crewmate whose workspace is an isolated firstmate home and whose brief is a charter; it runs the same spawn/brief/status/watcher/steer/teardown/recovery lifecycle as any direct report, but from its own `FM_HOME` with separate state, backlog, projects, and session lock.
+  `fm-home-seed.sh` provisions the isolated home (with `-`, a herdr worktree of the firstmate repo that herdr never recycles, so it survives any restart), clones the listed `no-mistakes`/`direct-PR` projects into it, initializes newly cloned `no-mistakes` projects, copies the charter to `data/charter.md`, and maintains the routing table; `fm-spawn.sh --secondmate` launches it through the same herdr and status-file path.
+  Secondmates are idle by default: startup recovery reconciles only work already in their own home, an empty queue waits silently for routed tasks, and they never self-initiate surveys or audits.
+  After seeding, `fm-backlog-handoff.sh` moves already-judged in-scope queued items from the main backlog into that secondmate home so the domain queue starts in the right place.
+  Idle secondmate panes are healthy; teardown is explicit and refuses while the secondmate home has in-flight work unless the captain has approved discard with `--force`.
 - **Project memory belongs to projects** - durable project-intrinsic agent knowledge lives in each project's committed `AGENTS.md`, with `CLAUDE.md` as a symlink.
   Ship briefs prompt crewmates to create or update those files through the normal delivery path; `data/projects.md` stays a thin private registry.
 - **Local clones stay fresh** - each spawn and PR-based teardown refresh remote-backed project clones with clean default-branch fast-forwards when the clone is on the default branch and has no local work, and prune local branches whose remote is gone and that no worktree still needs.
-- **Restart-proof** - all state lives in herdr, status files, and local markdown under `data/`.
+- **Restart-proof** - all state lives in herdr, status files, local markdown under `data/`, `data/secondmates.md`, and the persistent secondmate homes.
   Kill the first mate session anytime; the next one reconciles and carries on.
 
 ## The bin/ toolbelt
@@ -132,10 +138,12 @@ The first mate drives these; you rarely need to, but they work by hand too.
 | Script                   | Description                                                                                                         |
 | ------------------------ | ------------------------------------------------------------------------------------------------------------------- |
 | `fm-fleet-sync.sh`       | Fetch clones, clean-fast-forward their checked-out default branches, and safely prune branches whose remote is gone |
-| `fm-brief.sh`            | Scaffold a ship brief, or a report-only scout brief with `--scout`                                                  |
+| `fm-backlog-handoff.sh`  | Move already-judged in-scope queued backlog items from the main home into a seeded secondmate home                  |
+| `fm-brief.sh`            | Scaffold a ship brief, a report-only scout brief with `--scout`, or a secondmate charter with `--secondmate`        |
 | `fm-ensure-agents-md.sh` | Ensure project `AGENTS.md` is the real memory file and `CLAUDE.md` symlinks to it                                   |
 | `fm-guard.sh`            | Warn when tasks are in flight but queued wakes are pending or the watcher liveness beacon is stale or missing      |
-| `fm-spawn.sh`            | Spawn one task, or several `id=repo` pairs in one batch; records ship/scout task kind                                |
+| `fm-home-seed.sh`        | Provision a secondmate home transactionally (a herdr worktree of the repo with `-`), clone projects, initialize gates, and maintain `data/secondmates.md` |
+| `fm-spawn.sh`            | Spawn one task, several `id=repo` pairs in one batch, or a persistent secondmate with `--secondmate`; records task kind |
 | `fm-project-mode.sh`     | Resolve a project's delivery mode and `+yolo` flag from `data/projects.md`                                          |
 | `fm-merge-local.sh`      | Fast-forward a `local-only` project's local default branch after approval                                           |
 | `fm-review-diff.sh`      | Review a crewmate branch against the authoritative base, with optional `--stat` output                              |
@@ -146,7 +154,7 @@ The first mate drives these; you rarely need to, but they work by hand too.
 | `fm-peek.sh`             | Print a bounded tail of a crewmate pane                                                                             |
 | `fm-pr-check.sh`         | Record a PR-ready task and arm the watcher's merge poll                                                             |
 | `fm-promote.sh`          | Promote a scout task in place so it becomes a protected ship task                                                   |
-| `fm-teardown.sh`         | Remove the worktree and close its herdr pane; protects ship work, requires scout reports, and reminds backlog refresh |
+| `fm-teardown.sh`         | Remove the worktree and close its herdr pane, or retire a secondmate home; protects ship work, requires scout reports, checks child work, and reminds backlog refresh |
 | `fm-lock.sh`             | Single-firstmate session lock                                                                                       |
 
 ## Configuration
@@ -154,6 +162,12 @@ The first mate drives these; you rarely need to, but they work by hand too.
 The shared orchestrator behavior lives in `AGENTS.md` - edit it like any prompt when the fleet is empty, or dispatch shared-repo edits to a crewmate while tasks are in flight.
 Personal preferences for one captain's fleet live locally in `data/captain.md`; it is gitignored and read after `data/projects.md` at session start.
 This fork is Claude-only; crewmates run on Claude Code. To add other agents, pull the harness adapters from upstream firstmate.
+
+Persistent secondmate routes live locally in `data/secondmates.md`.
+Each line records the secondmate id, charter summary, absolute home path, natural-language scope, project clone list, and added date; `fm-home-seed.sh validate` refuses duplicate ids, duplicate homes, and nested or overlapping homes.
+Use `fm-home-seed.sh <id> - <project>...` to provision a fresh herdr worktree of the firstmate repo as the secondmate home; herdr never recycles it, so the home survives across restarts until explicit retirement or seed rollback removes it.
+Secondmate routes cover `no-mistakes` and `direct-PR` projects; `local-only` projects remain main-firstmate work.
+Set `FM_SECONDMATE_CHARTER` to seed from inline charter text when no filled charter brief exists; set `FM_SECONDMATE_SCOPE` when the routing scope should differ from the charter text.
 
 Runtime tuning via environment variables (defaults shown):
 
