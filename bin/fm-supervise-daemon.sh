@@ -69,13 +69,26 @@
 #          FM_HOUSEKEEPING_TICK     seconds between housekeeping passes while
 #                                   the watcher is mid-cycle (default 15)
 #          FM_BUSY_REGEX            OR-ed busy signatures (mirrors fm-watch.sh)
-#          FM_COMPOSER_IDLE_RE       regex matching an empty composer (idle
-#                                   prompt); non-match on the cursor line means
-#                                   pending input (default: bare prompts + busy
-#                                   footers)
+#          FM_COMPOSER_IDLE_RE      empty-composer regex applied AFTER structural
+#                                   border stripping (forces the empty verdict on
+#                                   a harness-specific idle token; default unset)
+#          FM_MAX_DEFER_SECS        max seconds a buffered escalation may sit
+#                                   undelivered before one normal flush attempt;
+#                                   if that still cannot confirm a submit, a loud
+#                                   rate-limited wedge alarm fires — ERROR log +
+#                                   state/.subsuper-inject-wedged marker + a
+#                                   supervisor status-line flash (default 300;
+#                                   0 disables). The daemon can no longer wedge
+#                                   silently forever (incident afk-invx-i5).
 #          FM_INJECT_CONFIRM_RETRIES Enter-retry attempts on a swallowed Enter
 #                                   (default 3); the digest is typed once, only
-#                                   Enter is retried
+#                                   Enter is retried. Composer-empty detection is
+#                                   structural (bin/fm-herdr-lib.sh): it strips
+#                                   the harness's box borders before deciding, so
+#                                   a bordered-but-empty composer ("│ > │") is not
+#                                   misread as pending input.
+#          FM_INJECT_CONFIRM_SLEEP  seconds between daemon submit checks
+#                                   (default 0.5)
 #          FM_LOG_MAX_BYTES / FM_LOG_KEEP_LINES / FM_CRASH_*  log + crash guards
 #          FM_STATE_OVERRIDE        alternate state dir (testing)
 #          Logs each wake to state/.supervise-daemon.log (size-capped). Single
@@ -86,6 +99,13 @@
 set -u
 
 FM_DAEMON_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Shared herdr pane primitives (border-aware composer detection + verify-retry
+# submit). Sourced at top level so BOTH the executed daemon and the unit tests
+# (which source this file for its pure functions) get the corrected, border-aware
+# composer detection. herdr-only; shared with bin/fm-send.sh.
+# shellcheck source=bin/fm-herdr-lib.sh
+. "$FM_DAEMON_DIR/fm-herdr-lib.sh"
 
 # --- tunables ---------------------------------------------------------------
 FM_SUPERVISOR_TARGET_DEFAULT=""
@@ -98,15 +118,20 @@ HOUSEKEEPING_TICK_DEFAULT=15
 # (integration not installed). Covers the tool-run footer ("esc to interrupt")
 # AND the thinking spinner line ("… (thinking with <effort> effort)"), which the
 # bare "esc to interrupt" misses. Primary busy detection is agent_status.
+# (Mirrors FM_HERDR_BUSY_REGEX_DEFAULT in fm-herdr-lib.sh, which backs the
+# composer detector's footer-on-the-prompt-line check.)
 BUSY_REGEX_DEFAULT='esc to interrupt|thinking with'
 CAPTAIN_RE_DEFAULT='done:|needs-decision:|blocked:|failed:|PR ready|checks green|ready in branch|merged'
-# Patterns that indicate an EMPTY composer (idle pane, no pending input). Used by
-# pane_input_pending to distinguish "bare prompt, nothing typed" from "human
-# mid-typing." The cursor/input line is checked against this regex: a match means
-# the composer is empty (safe to inject); a non-match with non-whitespace content
-# means there is pending input (defer). Err on the side of treating unrecognized
-# content as pending (false positives are cheap — just a deferred cycle).
-COMPOSER_IDLE_RE_DEFAULT='^[[:space:]]*(\$|>|❯|%|#)[[:space:]]*$|esc (to )?interrupt|Working\.\.\.'
+# Empty-composer / pending-input detection now lives in bin/fm-herdr-lib.sh
+# (fm_herdr_composer_state); it strips Claude's box borders before deciding, so
+# an idle bordered composer ("│ > │") is read as empty, not pending input.
+# FM_COMPOSER_IDLE_RE still overrides empty-composer matching (after border
+# stripping); FM_BUSY_REGEX still overrides the busy-footer fallback set.
+# Max seconds a buffered escalation may sit undelivered before the daemon retries
+# the normal flush path and, if that still cannot confirm a submit, raises a loud
+# rate-limited wedge alarm. The escape hatch makes a guard false-positive a
+# VISIBLE stall instead of an unbounded silent no-op (incident afk-invx-i5).
+MAX_DEFER_SECS_DEFAULT=300
 INJECT_FAIL_SLEEP_DEFAULT=30
 INJECT_CONFIRM_RETRIES_DEFAULT=3
 INJECT_CONFIRM_SLEEP_DEFAULT=0.5
@@ -430,29 +455,24 @@ pane_is_busy() {  # <window-or-pane>
     | grep -qiE "${FM_BUSY_REGEX:-$BUSY_REGEX_DEFAULT}"
 }
 
-# pane_input_pending: detect unsubmitted content in Claude's composer. herdr
-# exposes no cursor position (no equivalent of tmux `#{cursor_y}`), so we read the
-# rendered composer directly. Claude's composer is the prompt line that begins
-# with the input marker ❯, between the rule lines; the model/effort and
-# bypass-permission FOOTERS render BELOW it, so the composer is NOT the last
-# visible line (the original tail-1 read footers, never the composer). We take the
-# lowest ❯ line (the live composer; conversation history is above it) and test
-# whether anything is typed after the marker. Catches a previous injection whose
-# Enter was swallowed (text still in the composer). inject_msg also accepts "a
-# turn started (pane busy)" as a positive submit ack, so a transient render glitch
-# cannot wedge injection. FM_COMPOSER_IDLE_RE overrides the idle filter.
+# pane_input_pending: 0 (pending) if Claude's composer holds unsubmitted text, 1
+# otherwise. Thin wrapper over the shared, BORDER-AWARE detector in
+# fm-herdr-lib.sh (one source of truth with fm-send.sh). herdr exposes no cursor
+# position (no tmux `#{cursor_y}`), so the detector reads the rendered composer:
+# it locates the lowest prompt line (❯ or >) — conversation history is above it,
+# the model/effort + bypass FOOTERS render below it — STRIPS Claude's box borders
+# ("│ … │") first, then tests whether anything is typed after the prompt glyph.
+# The border strip is the afk-invx-i5 fix: an idle bordered composer ("│ > │")
+# used to look like pending input, so the daemon deferred 100% of escalations.
+# This catches a previous injection whose Enter was swallowed (text still in the
+# composer). inject_msg also accepts "a turn started (pane busy)" as a positive
+# submit ack, so a transient render glitch cannot wedge injection.
+# FM_COMPOSER_IDLE_RE overrides the idle filter (after border stripping).
 pane_input_pending() {  # <window-or-pane>
-  local target=$1 h out line content
+  local target=$1 h
   h=$(_handle_for "$target" "$(_state_root)")
   [ -n "$h" ] || return 1
-  out=$(herdr pane read "$h" --source visible --lines 25 2>/dev/null) || return 1
-  line=$(printf '%s\n' "$out" | grep -E '^[[:space:]]*❯' | tail -1)
-  [ -n "$line" ] || return 1
-  content=$(printf '%s' "$line" | sed -E 's/^[[:space:]]*❯[[:space:]]*//; s/[[:space:]]*$//')
-  [ -n "$content" ] || return 1
-  # Defensive: ignore a recognized idle/busy token that is not real typed input.
-  printf '%s' "$content" | grep -qiE "${FM_COMPOSER_IDLE_RE:-$COMPOSER_IDLE_RE_DEFAULT}" && return 1
-  return 0
+  fm_herdr_input_pending "$h"
 }
 
 escalate_add() {  # <state> <distilled-item>
@@ -475,8 +495,38 @@ escalate_flush() {  # <state>
   # Single-line wrapper: no embedded newlines (inject_msg also collapses as a
   # safety net, but keeping the source single-line makes the intent explicit).
   msg=$(printf 'Supervisor escalate (%s event(s)): %s (pre-read; re-arm not needed — watcher daemon-managed)' "$n" "$msg")
-  if inject_msg "$msg" "$state"; then : > "$buf"; rm -f "${buf}.since"; return 0; fi
+  # On a confirmed submit, clear the buffer AND any standing wedge marker (the
+  # stall is over). On failure the buffer survives for the next cycle / catch-up.
+  if inject_msg "$msg" "$state"; then : > "$buf"; rm -f "${buf}.since" "$state/.subsuper-inject-wedged"; return 0; fi
   return 1
+}
+
+# Raise a loud, rate-limited alarm when escalations cannot be delivered after
+# max-defer (the supervisor pane is genuinely busy/wedged, or the submit's Enter
+# is swallowed). The daemon must NEVER silently wedge: this logs an ERROR, drops
+# a durable marker firstmate's "while you were out" catch-up can surface, and
+# flashes the supervisor client's status line. Nothing is lost — the buffer and
+# the wake-queue both survive — but the stall stops being invisible.
+inject_wedge_alarm() {  # <state> <age-seconds>
+  local state=$1 age=$2 marker
+  marker="$state/.subsuper-inject-wedged"
+  # Re-alarm at most once per max-defer window so a long wedge does not spam.
+  if [ "$(_file_age "$marker")" -lt "${FM_MAX_DEFER_SECS:-$MAX_DEFER_SECS_DEFAULT}" ]; then
+    return 0
+  fi
+  log "ERROR: away-mode escalation undelivered ${age}s; inject could not confirm a submit (supervisor pane busy or wedged). Buffer + wake-queue preserved; alarm marker written."
+  {
+    printf 'fm away-mode inject WEDGED: %ss undelivered as of %s\n' "$age" "$(date '+%Y-%m-%dT%H:%M:%S%z')"
+    printf 'The supervisor pane could not accept an escalation. Buffered items:\n'
+    cat "$state/.subsuper-escalations" 2>/dev/null
+  } > "$marker" 2>/dev/null || true
+  # Status-line flash on the supervisor client. herdr has no tmux
+  # `display-message`; its equivalent client-surfacing status flash is a
+  # notification toast (the supervisor's own client raises it). Best-effort —
+  # never fatal if herdr is unreachable; the ERROR log + marker are the durable
+  # record.
+  herdr notification show "fm: away-mode escalations WEDGED" \
+    --body "${age}s undelivered — see $marker" --sound request >/dev/null 2>&1 || true
 }
 
 _oldest_line_age() {  # <buf> -> seconds since the oldest buffered item first arrived (sidecar epoch)
@@ -491,15 +541,18 @@ _oldest_line_age() {  # <buf> -> seconds since the oldest buffered item first ar
 }
 
 # --- housekeeping (runs every tick while the watcher is mid-cycle) ----------
-# Three cheap jobs, each guarded so an empty/quiet fleet costs near zero:
+# Four cheap jobs, each guarded so an empty/quiet fleet costs near zero:
 #  1) batch flush: if the escalation buffer's oldest content is older than
 #     ESCALATE_BATCH_SECS (or batching is disabled), inject one digest.
+#  1b) max-defer escape: if the buffer is STILL undelivered past MAX_DEFER_SECS,
+#     attempt one normal delivery; if it cannot confirm a submit, raise the loud
+#     wedge alarm. Never silently defer forever (incident afk-invx-i5).
 #  2) stale recheck: for each pending stale marker past STALE_ESCALATE_SECS,
 #     re-peek the pane; still idle -> escalate (wedge); resumed -> clear marker.
 #  3) heartbeat scan: every HEARTBEAT_SCAN_SECS, grep state/*.status for a
 #     captain-relevant line the per-wake classifier missed and escalate it.
 housekeeping() {  # <state>
-  local state=$1 now due f key task win marker age last
+  local state=$1 now due f key task win marker age last max_defer oldest
   now=$(_now)
 
   # (1) batch flush
@@ -509,6 +562,26 @@ housekeeping() {  # <state>
     due=$(_oldest_line_age "$state/.subsuper-escalations")
     if [ "$due" -ge "${FM_ESCALATE_BATCH_SECS:-$ESCALATE_BATCH_SECS_DEFAULT}" ]; then
       escalate_flush "$state" || true
+    fi
+  fi
+
+  # (1b) max-defer escape. If anything is still buffered past MAX_DEFER_SECS,
+  # retry the normal delivery path. If that still cannot confirm a submit, raise
+  # a loud wedge alarm while preserving the buffer. Presence-gated (afk only) and
+  # throttled to one alarm per max-defer window (the wedge marker doubles as the
+  # throttle): a successful flush clears the buffer and any standing marker; a
+  # failed one alarms and waits.
+  max_defer=${FM_MAX_DEFER_SECS:-$MAX_DEFER_SECS_DEFAULT}
+  if afk_active "$state" && [ "$max_defer" -gt 0 ] && [ -s "$state/.subsuper-escalations" ]; then
+    oldest=$(_oldest_line_age "$state/.subsuper-escalations")
+    if [ "$oldest" -ge "$max_defer" ] \
+       && [ "$(_file_age "$state/.subsuper-inject-wedged")" -ge "$max_defer" ]; then
+      if escalate_flush "$state"; then
+        log "inject recovered: max-defer flush succeeded after ${oldest}s undelivered"
+        rm -f "$state/.subsuper-inject-wedged"
+      else
+        inject_wedge_alarm "$state" "$oldest"
+      fi
     fi
   fi
 
@@ -565,24 +638,32 @@ window_for_task() {  # <task-key>
 }
 
 # --- injection --------------------------------------------------------------
+# Send ONE Enter to a herdr pane (the enter-fn the shared submit primitive
+# injects). Defined here so the lib stays free of any direct send-keys call site.
+_inject_send_enter() { herdr pane send-keys "$1" enter >/dev/null 2>&1 || true; }
+
 # inject_msg: send one escalation digest to the supervisor pane.
-# Returns 0 on successful inject (or empty buffer), non-zero if the pane is
-# gone, the supervisor is busy, afk is inactive, or the turn-started
-# confirmation fails after bounded retries. On non-zero the caller preserves
-# the buffer so the escalation survives for the next cycle or the catch-up flush.
+# Returns 0 on a VERIFIED submit (or empty buffer), non-zero if the pane is gone,
+# the supervisor is busy, afk is inactive, or the submit cannot be confirmed
+# after bounded retries. On non-zero the caller preserves the buffer so the
+# escalation survives for the next cycle or the catch-up flush.
 #
-# Submit model (the two HIGH fixes from the maintainer's review):
+# Submit model (verified submit, shared primitive):
 #   - TYPE ONCE, then submit with Enter. Never retype the digest: a swallowed
 #     Enter leaves our text in the composer, and retyping would concatenate two
 #     sentinel-prefixed digests into one corrupted turn.
-#   - SUBMIT ACK = the composer is empty after Enter. pane_input_pending checks
-#     the cursor line: empty means the text was consumed (submit succeeded);
-#     non-empty means Enter was swallowed (retry Enter only, not retype).
-#   - COMPOSER GUARD before typing: if the cursor line already has content (a
+#   - SUBMIT ACK = a turn started (pane went busy) OR the BORDER-AWARE composer
+#     detector reports empty after Enter. Both mean the text was consumed. An
+#     unknown/unreadable pane does NOT count as delivered (strict: the buffer is
+#     preserved, never cleared on a guess). Enter is retried (Enter only) while
+#     the composer still shows our text.
+#   - COMPOSER GUARD before typing: if the composer already holds content (a
 #     human's half-typed line, or a previous injection's unsent text), defer
-#     entirely — injecting would merge with the human's text.
+#     entirely — injecting would merge with the human's text. The guard is
+#     border-aware, so an idle bordered composer ("│ > │") no longer false-defers
+#     forever (incident afk-invx-i5).
 inject_msg() {  # <message> [state]
-  local msg=$1 state target i retries sleep_s
+  local msg=$1 state target retries sleep_s i verdict
   state="${2:-$(_state_root)}"
   # (1) Presence-gate: inject ONLY when afk is active. When afk is off, the
   # daemon self-handles and stays quiet; firstmate drives the base one-shot
@@ -598,9 +679,10 @@ inject_msg() {  # <message> [state]
   local h; h=$(_handle_for "$target" "$state")
   pane_exists "$h" || return 1
   # (3) Busy-guard: never inject into an in-use pane. Two checks:
-  #   a) pane_is_busy: the harness shows a busy footer (agent mid-turn).
-  #   b) pane_input_pending: the cursor line has non-empty content (a human's
-  #      half-typed line, or a previous injection whose Enter was swallowed).
+  #   a) pane_is_busy: herdr agent_status says the agent is mid-turn.
+  #   b) pane_input_pending: the composer holds real unsubmitted text (a human's
+  #      half-typed line, or a previous injection whose Enter was swallowed) —
+  #      now border-aware, so an idle bordered composer is not misread as pending.
   # Both defer; the buffered escalation survives for the next cycle.
   if pane_is_busy "$target"; then
     log "inject deferred: supervisor pane busy (agent mid-turn)"
@@ -610,10 +692,11 @@ inject_msg() {  # <message> [state]
     log "inject deferred: supervisor pane has pending input (non-empty composer)"
     return 1
   fi
-  # (4) Type the digest ONCE, then submit with Enter. Retry Enter only (never
-  # retype) so a swallowed Enter does not concatenate digests in an uncleared
-  # composer. Submit success = the composer is empty after Enter (the text was
-  # consumed); submit failure = the composer still has our text (Enter swallowed).
+  # (4) Type the digest ONCE, then submit with Enter (retry Enter only, never
+  # retype) and VERIFY via the same border-aware detector. Success = a turn
+  # started (pane busy) OR the composer is confirmed EMPTY afterward (the text
+  # was consumed). An unconfirmed/unknown pane does NOT count as delivered, so
+  # the buffer is preserved (strict) rather than cleared on a guess.
   retries=${FM_INJECT_CONFIRM_RETRIES:-$INJECT_CONFIRM_RETRIES_DEFAULT}
   sleep_s=${FM_INJECT_CONFIRM_SLEEP:-$INJECT_CONFIRM_SLEEP_DEFAULT}
   if ! herdr pane send-text "$h" "$msg" >/dev/null 2>&1; then
@@ -624,17 +707,21 @@ inject_msg() {  # <message> [state]
   i=0
   while [ "$i" -lt "$retries" ]; do
     i=$((i + 1))
-    herdr pane send-keys "$h" enter >/dev/null 2>&1 || true
+    _inject_send_enter "$h"
     sleep "$sleep_s"
-    # Submit ack: a turn started (pane now busy) is a definitive "captain is
-    # processing our digest"; a cleared composer (no pending input) is the
-    # secondary signal. Either means Enter landed — stop, never retype.
-    if pane_is_busy "$target" || ! pane_input_pending "$target"; then
-      return 0
-    fi
-    # Enter was swallowed (text still in composer). Retry Enter, not retype.
+    # Submit ack #1: a turn started (pane now busy) is a definitive "captain is
+    # processing our digest" — a herdr-native confirmation the tmux path lacks.
+    if pane_is_busy "$target"; then return 0; fi
+    # Submit ack #2: the border-aware detector reports the composer EMPTY (the
+    # text was consumed). "pending" means Enter was swallowed → retry Enter only.
+    # "unknown" (unreadable) is NOT delivered for this strict daemon path.
+    verdict=$(fm_herdr_composer_state "$h")
+    case "$verdict" in
+      empty) return 0 ;;
+    esac
+    # Enter was swallowed (text still in composer) or unreadable. Retry Enter.
   done
-  log "inject failed: Enter swallowed after $retries retries (text in composer)"
+  log "inject failed: submit unconfirmed after $retries retries (verdict=${verdict:-unknown}, text may be in composer)"
   return 1
 }
 

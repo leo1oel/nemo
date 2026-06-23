@@ -84,7 +84,7 @@ state/               volatile runtime signals; gitignored
   .hash-* .count-* .stale-* .seen-* .last-* .heartbeat-streak   watcher internals; never touch
   .last-watcher-beat watcher liveness beacon, touched every poll; fm-guard.sh reads it
   .afk               durable away-mode flag; present = sub-supervisor may inject escalations (set by /afk, cleared on captain return)
-  .subsuper-* .supervise-daemon.*   sub-supervisor internals (stale markers, escalation buffer, seen-status dedup, log, lock, pid); never touch
+  .subsuper-* .supervise-daemon.*   sub-supervisor internals (stale markers, escalation buffer, seen-status dedup, the .subsuper-inject-wedged max-defer alarm marker surfaced on catch-up, log, lock, pid); never touch
 .no-mistakes/        local validation state and evidence; gitignored
 ```
 
@@ -479,7 +479,7 @@ With afk active, do not separately arm `fm-watch.sh` - the daemon owns it; but `
 **Exiting afk (the captain's contract).** When firstmate receives a message while afk is active:
 - Leading `FM_INJECT_MARK` (ASCII unit separator, 0x1f) → **internal escalation**. Stay afk, process it.
 - Message starts with `/afk` → **afk re-invocation**. Stay afk (refresh the flag).
-- Anything else → **the captain is back.** Clear `state/.afk`, stop the daemon, flush one distilled "while you were out" catch-up (drain `state/.wake-queue` + summarize any pending `state/.subsuper-escalations`), and resume full per-wake responsiveness (arm `bin/fm-watch.sh`).
+- Anything else → **the captain is back.** Clear `state/.afk`, stop the daemon, flush one distilled "while you were out" catch-up (drain `state/.wake-queue` + summarize any pending `state/.subsuper-escalations` and any `state/.subsuper-inject-wedged` marker), and resume full per-wake responsiveness (arm `bin/fm-watch.sh`).
 **Bias ambiguous cases toward exit** (a present captain beats token savings; a false exit is self-correcting).
 The marker is in-band (it travels with the message text), so it does not depend on any herdr-level typed-vs-injected distinction.
 
@@ -488,8 +488,10 @@ The marker is in-band (it travels with the message text), so it does not depend 
 **Classification (per wake):** a `signal` whose status has no captain-relevant verb (`done:|needs-decision:|blocked:|failed:|PR ready|checks green|ready in branch|merged`) self-handles; a captain-relevant verb escalates. `check` always escalates. `stale` with a terminal status escalates; non-terminal stale records a marker and self-handles, and housekeeping escalates it as a possible wedge only after `FM_STALE_ESCALATE_SECS` (default 240s). `heartbeat` self-handles (the daemon runs its own cheap fleet scan every `FM_HEARTBEAT_SCAN_SECS`). Unknown or any uncertainty → escalate (fail-safe).
 
 **Injection (herdr).** Escalations buffer up to `FM_ESCALATE_BATCH_SECS` (default 90s; 0 = immediate) and flush as ONE single-line digest, sentinel-prefixed, via `herdr pane send-text` + `send-keys enter`.
-Before injecting, the daemon defers if the captain pane is busy (`pane_is_busy` reads herdr's `agent_status`, which catches Claude's thinking phase that the busy-footer text alone misses) or its composer holds unsubmitted text (`pane_input_pending` reads the `❯` composer line, since herdr exposes no cursor).
-It types the digest once and retries Enter only (never retypes), confirming via turn-started (pane busy) or a cleared composer, so a swallowed Enter cannot concatenate two digests.
+Before injecting, the daemon defers if the captain pane is busy (`pane_is_busy` reads herdr's `agent_status`, which catches Claude's thinking phase that the busy-footer text alone misses) or its composer holds unsubmitted text (`pane_input_pending` reads the composer line, since herdr exposes no cursor).
+The composer detector is **border-aware** (shared with `fm-send.sh` via `bin/fm-herdr-lib.sh`): it strips Claude's box borders before deciding, so an idle bordered composer (`│ > │`) reads as empty, not pending - without this the daemon deferred 100% of escalations (incident afk-invx-i5).
+It types the digest once and retries Enter only (never retypes), confirming the submit with the same border-aware detector via turn-started (pane busy) or a confirmed-empty composer, so a swallowed Enter cannot concatenate two digests and a bordered-empty composer is not mistaken for a swallow.
+**Max-defer escape:** if a digest stays undelivered past `FM_MAX_DEFER_SECS` (default 300; 0 disables), the daemon forces one normal flush; if it still cannot confirm a submit it raises a loud rate-limited wedge alarm - an ERROR log line, a durable `state/.subsuper-inject-wedged` marker (surfaced on the catch-up), and a `herdr notification show` status flash - so a guard false-positive becomes a visible stall, never a silent forever-defer.
 Reliability shell preserved: portable mkdir lock, crash-loop backoff, pane-gone guard, signal-trapped shutdown that flushes before exit; the `.wake-queue` + `fm-wake-drain.sh` recover any missed injection. `FM_INJECT_SKIP` (default `heartbeat`) force-self-handles matching kinds - use sparingly.
 
 ## 9. Escalation and captain etiquette

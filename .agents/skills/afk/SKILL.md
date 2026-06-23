@@ -49,8 +49,9 @@ No `/back` is needed. The first genuine message is the return signal:
 - A message **without** the sentinel marker and **not** starting with `/afk`
   → the captain is back. Clear `state/.afk`, stop the daemon, flush one
   distilled "while you were out" catch-up (drain `state/.wake-queue`, summarize
-  any pending escalations from `state/.subsuper-escalations`), and resume full
-  per-wake responsiveness (arm `bin/fm-watch.sh`).
+  any pending escalations from `state/.subsuper-escalations` and any
+  `state/.subsuper-inject-wedged` marker), and resume full per-wake
+  responsiveness (arm `bin/fm-watch.sh`).
 - A message **with** the sentinel marker (`FM_INJECT_MARK`, ASCII 0x1f) → it
   is a daemon escalation; stay afk and process it.
 - Re-invoking `/afk` while already away → stay afk (refresh the flag); this
@@ -77,25 +78,46 @@ or herdr-level typed-vs-injected distinction.
 ## Busy-guard and composer guard
 
 The daemon never injects into an in-use pane. Two checks run before every
-injection:
+injection (the composer/submit logic is shared with `fm-send.sh` via
+`bin/fm-herdr-lib.sh`):
 
 - **`pane_is_busy`** — reads herdr's `agent_status` for the pane (caught live as
   the reliable signal: it covers Claude's thinking phase, which the busy-footer
   text alone misses). Footer regex is the fallback when the integration is absent.
-- **`pane_input_pending`** — reads Claude's `❯` composer line (herdr exposes no
+- **`pane_input_pending`** — reads Claude's composer line (herdr exposes no
   cursor position; the composer is not the last line — status footers render
-  below it). Text after the marker means unsubmitted content, e.g. a previous
-  injection whose Enter was swallowed.
+  below it). The detector **strips Claude's composer box borders first**, so an
+  idle *bordered* composer (Claude draws `│ > … │`) is correctly read as empty,
+  not pending. Without this, every idle Claude pane looked like pending input
+  and the daemon deferred 100% of escalations (incident afk-invx-i5). Real
+  unsubmitted text after the prompt glyph (a half-typed line, or a previous
+  injection whose Enter was swallowed) reads as pending. `FM_COMPOSER_IDLE_RE`
+  still overrides empty-composer matching after border stripping.
 
 Either condition defers the injection; the buffered escalation survives in
 `state/.subsuper-escalations` and is retried on the next housekeeping tick. In
 afk mode the composer guard is belt-and-suspenders (no human is typing), but it
 protects against the daemon's own previous injection sitting unsent.
 
+**Max-defer escape (the daemon must never silently wedge).**
+If anything stays buffered past `FM_MAX_DEFER_SECS` (default 300), the daemon
+attempts one normal flush (still requiring an idle pane and empty composer). If
+that submit cannot be confirmed, it raises a loud, rate-limited wedge alarm: an
+ERROR in the daemon log, a durable `state/.subsuper-inject-wedged` marker
+(surface it on the "while you were out" catch-up if present), and a status-line
+flash on the supervisor client via `herdr notification show`. A guard
+false-positive becomes a visible stall, never an unbounded silent no-op.
+
 ## Submit model
 
 The daemon types the digest **once** via `herdr pane send-text`, then submits
-with `herdr pane send-keys ... enter`. It confirms the turn started — the pane
-goes busy, or the composer clears — and retries **Enter only** (never retypes
-the digest) if the Enter was swallowed, preventing concatenation of two
-sentinel-prefixed digests into one corrupted turn.
+with `herdr pane send-keys ... enter` and **verifies** the submit landed using
+the same border-aware detector as the composer guard. A submit "landed" only
+when a turn started (the pane goes busy) **or** the composer is confirmed empty
+afterward — a bordered-empty Claude composer (`│ > │`) is recognized as
+submitted rather than mistaken for a swallowed Enter. Enter is retried **Enter
+only** (never retypes the digest) while the composer still shows our text,
+preventing concatenation of two sentinel-prefixed digests into one corrupted
+turn. `fm-send.sh` shares the same primitive and **exits non-zero** when a
+steer's Enter is positively swallowed, so firstmate learns an instruction did
+not land instead of leaving it silently unsubmitted.
