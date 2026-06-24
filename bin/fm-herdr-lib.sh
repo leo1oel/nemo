@@ -16,9 +16,22 @@
 # acknowledgement (a submit "landed" iff the composer is empty afterward),
 # fixing the parallel false "Enter swallowed".
 #
+# Ghost text (parity with upstream #59): claude renders a predicted-next-prompt
+# "suggestion" as dim/faint text (ANSI SGR 2) inside an otherwise-empty composer.
+# A plain read cannot tell it apart from text a human typed, so an idle pane reads
+# as holding pending input and the away-mode daemon defers injection. fm-spawn
+# disables it at the source (CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false) for every
+# firstmate-launched agent; as defense in depth for any pane that flag cannot reach
+# (e.g. the captain's own pane), the composer reader captures WITH ANSI styling
+# (herdr pane read --format ansi), drops dim/faint runs (fm_herdr_strip_ghost), and
+# decides on what is left, so ghost/placeholder text never counts as real input.
+# The styled capture is consumed internally and parsed into a verdict here; it is
+# NEVER surfaced (fm-peek and every human/LLM-facing path stay plain), so no
+# escape-laden pane bulk reaches the captain.
+#
 # Per-harness override: FM_COMPOSER_IDLE_RE matches an empty composer AFTER
-# structural border stripping (forces the empty verdict on whatever idle glyph a
-# harness uses). FM_BUSY_REGEX overrides the busy-footer fallback set.
+# dim-ghost and structural border stripping (forces the empty verdict on whatever
+# idle glyph a harness uses). FM_BUSY_REGEX overrides the busy-footer fallback set.
 #
 # herdr exposes no cursor position (no tmux `#{cursor_y}`), so the composer is
 # located structurally: the lowest rendered line that, after border stripping,
@@ -51,6 +64,72 @@ _fm_strip_box_borders() {  # <line> -> line with box borders + surrounding ws re
   printf '%s' "$s"
 }
 
+# fm_herdr_strip_ghost: remove dim/faint (ANSI SGR 2) styled runs from the
+# captured composer text, then drop any remaining escape sequences, leaving only
+# the plain, normal-intensity text — the text a human actually typed. Dim/faint
+# runs are ghost/placeholder text (e.g. claude's predicted-next-prompt suggestion)
+# that fills an otherwise-empty composer and must never read as pending input.
+# Reads the styled capture on stdin (from `herdr pane read --format ansi`) and
+# prints plain text on stdout. LC_ALL=C makes awk walk bytes, so multibyte glyphs
+# (e.g. ❯) and dim runs alike pass through or drop intact without locale-dependent
+# character classes. A reset (SGR 0) or normal-intensity (SGR 22) ends a dim run;
+# codes are processed left to right within a sequence so "ESC[0;2m" (reset then
+# dim) reads as dim. Normal-intensity color (SGR 38/48/58 payloads) is preserved,
+# so SGR-colored typed input still counts.
+fm_herdr_strip_ghost() {
+  LC_ALL=C awk '
+    function sgr_code(v, b) {
+      b = v
+      sub(/:.*/, "", b)
+      if (b == "") b = "0"
+      return b
+    }
+    function skip_color_payload(a, p, k, mode, code) {
+      if (index(a[p], ":") > 0) return p
+      if (p >= k) return p
+      mode = a[p + 1]
+      code = sgr_code(mode)
+      if (index(mode, ":") > 0) return p + 1
+      if (code == "5") return p + 2
+      if (code == "2") return p + 4
+      return p + 1
+    }
+    {
+      line = $0; out = ""; dim = 0; n = length(line); i = 1
+      while (i <= n) {
+        c = substr(line, i, 1)
+        if (c == "\033") {            # ESC: consume a CSI ... final-byte sequence
+          j = i + 1
+          if (substr(line, j, 1) == "[") {
+            j++; params = ""
+            while (j <= n) {
+              cc = substr(line, j, 1)
+              if (cc ~ /[@-~]/) break
+              params = params cc; j++
+            }
+            if (j <= n && substr(line, j, 1) == "m") {   # SGR: update dim/faint state
+              if (params == "") params = "0"
+              k = split(params, a, ";")
+              for (p = 1; p <= k; p++) {
+                v = a[p]; code = sgr_code(v)
+                if (code == "38" || code == "48" || code == "58") {
+                  p = skip_color_payload(a, p, k)
+                } else if (code == "2") dim = 1
+                else if (code == "0" || code == "22") dim = 0
+              }
+            }
+            if (j <= n) { i = j + 1; continue }
+          }
+          i = i + 1; continue          # lone/other ESC: drop the ESC byte only
+        }
+        if (dim == 0) out = out c        # keep only normal-intensity bytes
+        i++
+      }
+      print out
+    }
+  '
+}
+
 # fm_herdr_composer_state: classify the composer of <handle> as
 #   empty   — no pending input (blank box, a bare prompt glyph, or a busy
 #             footer landed on the prompt line). Safe to inject; also the
@@ -64,8 +143,15 @@ _fm_strip_box_borders() {  # <line> -> line with box borders + surrounding ws re
 # bordered prompt with text ("│ > hi │") reads as pending.
 fm_herdr_composer_state() {  # <handle> -> empty|pending|unknown
   local h=$1 out line stripped content lc
-  out=$(herdr pane read "$h" --source visible --lines 25 2>/dev/null) || { printf 'unknown'; return 0; }
+  # Capture WITH ANSI styling so dim/faint ghost text can be dropped; this styled
+  # read is internal only (fm-peek and human-facing reads stay plain).
+  out=$(herdr pane read "$h" --source visible --lines 25 --format ansi 2>/dev/null) || { printf 'unknown'; return 0; }
   [ -n "$out" ] || { printf 'unknown'; return 0; }
+  # Drop dim/faint ghost runs and any remaining escape sequences, leaving plain,
+  # normal-intensity text. Everything below then operates on plain text exactly as
+  # before, so the border-aware structural detection is unchanged.
+  out=$(printf '%s\n' "$out" | fm_herdr_strip_ghost)
+  [ -n "$out" ] || { printf 'empty'; return 0; }
   # Find the composer line: the LOWEST rendered line that, after border
   # stripping, begins with a prompt glyph (❯ or >). Conversation history is
   # above it; footers (model/effort, bypass) render below it.
