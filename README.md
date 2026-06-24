@@ -128,6 +128,8 @@ Each crewmate is a herdr agent pane in its own worktree workspace; watch any of 
 - **Project memory belongs to projects** - durable project-intrinsic agent knowledge lives in each project's committed `AGENTS.md`, with `CLAUDE.md` as a symlink.
   Ship briefs prompt crewmates to create or update those files through the normal delivery path; `data/projects.md` stays a thin private registry.
 - **Local clones stay fresh** - each spawn and PR-based teardown refresh remote-backed project clones with clean default-branch fast-forwards when the clone is on the default branch and has no local work, and prune local branches whose remote is gone and that no worktree still needs.
+- **Self-updates stay safe** - `/updatefirstmate` fast-forwards the running firstmate repo and registered secondmate homes from `origin`, then re-reads updated instructions and nudges updated secondmates without touching project clones.
+  The update is fast-forward only: dirty, diverged, offline, and off-default/off-lease targets are reported and left untouched.
 - **Restart-proof** - all state lives in herdr, status files, local markdown under `data/`, `data/secondmates.md`, and the persistent secondmate homes.
   Kill the first mate session anytime; the next one reconciles and carries on.
 
@@ -138,6 +140,7 @@ The first mate drives these; you rarely need to, but they work by hand too.
 | Script                   | Description                                                                                                         |
 | ------------------------ | ------------------------------------------------------------------------------------------------------------------- |
 | `fm-fleet-sync.sh`       | Fetch clones, clean-fast-forward their checked-out default branches, and safely prune branches whose remote is gone |
+| `fm-update.sh`           | Self-update the running firstmate repo and registered secondmate homes with fast-forward-only pulls from origin      |
 | `fm-backlog-handoff.sh`  | Move already-judged in-scope queued backlog items from the main home into a seeded secondmate home                  |
 | `fm-brief.sh`            | Scaffold a ship brief, a report-only scout brief with `--scout`, or a secondmate charter with `--secondmate`        |
 | `fm-ensure-agents-md.sh` | Ensure project `AGENTS.md` is the real memory file and `CLAUDE.md` symlinks to it                                   |

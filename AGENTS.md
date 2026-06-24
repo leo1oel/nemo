@@ -127,6 +127,13 @@ The mechanics (launch command, autonomy flag, turn-end hook) live in `bin/fm-spa
 First launch in a fresh worktree (or first ever on a machine) may show a trust or bypass-permissions confirmation.
 After every spawn, peek the pane within ~20s; if such a dialog is showing, accept it with `bin/fm-send.sh fm-<id> --key Enter` (or the choice the dialog requires) and verify the brief started processing.
 
+Ghost text (prompt suggestions): claude renders a predicted-next-prompt suggestion as dim/faint text inside an otherwise-empty composer after a turn completes.
+A plain pane read cannot tell that ghost text apart from text a human typed, so left unhandled it makes firstmate misread an idle composer as holding pending input.
+Firstmate launches every claude crewmate and secondmate with `CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false` (a per-launch env prefix in `bin/fm-spawn.sh`, scoped to firstmate-launched agents - it never touches the captain's global config), which disables the interactive ghost text at the source.
+The CLI's `--prompt-suggestions` flag is print/SDK-mode only and does NOT suppress the interactive composer ghost text (verified empirically on v2.1.186), so the env var is the correct control.
+As defense in depth for any pane that flag cannot reach (such as the captain's own firstmate composer the away-mode daemon reads), the composer reader in `bin/fm-herdr-lib.sh` captures the pane WITH ANSI styling (`herdr pane read --format ansi`), drops dim/faint (SGR 2) runs, and ignores them, so only normal-intensity typed text counts as pending input.
+That styled capture is internal to the boolean detector only; `fm-peek` and every other human/LLM-facing read path stay plain `herdr pane read` with no escape codes.
+
 ## 5. Recovery (run at every session start)
 
 You may have been restarted mid-flight.
@@ -489,8 +496,8 @@ The marker is in-band (it travels with the message text), so it does not depend 
 
 **Injection (herdr).** Escalations buffer up to `FM_ESCALATE_BATCH_SECS` (default 90s; 0 = immediate) and flush as ONE single-line digest, sentinel-prefixed, via `herdr pane send-text` + `send-keys enter`.
 Before injecting, the daemon defers if the captain pane is busy (`pane_is_busy` reads herdr's `agent_status`, which catches Claude's thinking phase that the busy-footer text alone misses) or its composer holds unsubmitted text (`pane_input_pending` reads the composer line, since herdr exposes no cursor).
-The composer detector is **border-aware** (shared with `fm-send.sh` via `bin/fm-herdr-lib.sh`): it strips Claude's box borders before deciding, so an idle bordered composer (`│ > │`) reads as empty, not pending - without this the daemon deferred 100% of escalations (incident afk-invx-i5).
-It types the digest once and retries Enter only (never retypes), confirming the submit with the same border-aware detector via turn-started (pane busy) or a confirmed-empty composer, so a swallowed Enter cannot concatenate two digests and a bordered-empty composer is not mistaken for a swallow.
+The composer detector is **dim-ghost-aware and border-aware** (shared with `fm-send.sh` via `bin/fm-herdr-lib.sh`): it drops Claude's dim/faint prompt-suggestion ghost text, then strips Claude's box borders before deciding, so a ghost-only or idle bordered composer (`│ > │`) reads as empty, not pending - without these filters the daemon deferred 100% of escalations (incidents afk-invx-i5 and composer-robust).
+It types the digest once and retries Enter only (never retypes), confirming the submit with the same dim-ghost-aware and border-aware detector via turn-started (pane busy) or a confirmed-empty composer, so a swallowed Enter cannot concatenate two digests and a ghost-only or bordered-empty composer is not mistaken for a swallow.
 **Max-defer escape:** if a digest stays undelivered past `FM_MAX_DEFER_SECS` (default 300; 0 disables), the daemon forces one normal flush; if it still cannot confirm a submit it raises a loud rate-limited wedge alarm - an ERROR log line, a durable `state/.subsuper-inject-wedged` marker (surfaced on the catch-up), and a `herdr notification show` status flash - so a guard false-positive becomes a visible stall, never a silent forever-defer.
 Reliability shell preserved: portable mkdir lock, crash-loop backoff, pane-gone guard, signal-trapped shutdown that flushes before exit; the `.wake-queue` + `fm-wake-drain.sh` recover any missed injection. `FM_INJECT_SKIP` (default `heartbeat`) force-self-handles matching kinds - use sparingly.
 
@@ -559,3 +566,15 @@ Set `FM_SECONDMATE_CHARTER='<charter>'` to fill the charter text and `FM_SECONDM
 The scaffold's definition of done encodes the idle-by-default contract (section 6): on startup the secondmate reconciles only its own in-flight work and then waits for routed tasks, never self-initiating a survey or audit; preserve that wording when filling the charter.
 `bin/fm-home-seed.sh` copies the charter into the secondmate home as `data/charter.md` and refuses a missing or placeholder charter; `bin/fm-spawn.sh --secondmate` launches it through the same launch-template path.
 After seeding, hand the new secondmate's in-scope queued items off from the main backlog with `bin/fm-backlog-handoff.sh` (section 6).
+
+## 12. Self-update
+
+firstmate is its own repo behind the no-mistakes gate, so improvements to `AGENTS.md`, `bin/`, and skills reach `main` and then wait for each running firstmate to pull them.
+The `/updatefirstmate` skill performs that pull in place for the running main firstmate and every secondmate.
+It runs `bin/fm-update.sh`, which fast-forwards this firstmate repo's default branch from origin and then fast-forwards every registered secondmate home (resolved from `state/*.meta` and `data/secondmates.md`) the same way.
+The mechanics mirror `bin/fm-fleet-sync.sh` exactly: fast-forward only, never forcing, never creating a merge commit, never stashing, and skipping with a reported reason anything dirty, diverged, offline, or on a non-default branch, so prime directive #3 holds and no unlanded work is ever discarded.
+A tracked-files fast-forward leaves the gitignored operational dirs untouched, so a secondmate's in-flight work is never disrupted.
+On the herdr backend each secondmate home is a herdr worktree of this same repo, checked out on its own lease branch `secondmate-<id>`; a fast-forward there advances only that worktree's lease branch to `origin/<default>` and never touches another worktree's checkout or the shared default branch.
+`bin/fm-update.sh` does only the git mechanics and prints a summary plus two action lines, `reread-firstmate: yes|no` and `nudge-secondmates: <send-targets...>|none`.
+The skill then performs the parts a script cannot: when the running firstmate's instruction surface changed it re-reads `AGENTS.md`, and for each updated live secondmate with metadata it sends a gentle one-line re-read nudge via `bin/fm-send.sh fm-<id>` so the whole tree converges on the latest `bin/` and instructions.
+This is a sanctioned self-write to the firstmate repo and its own worktrees only, exactly like the fleet sync, and never touches anything under `projects/`.
