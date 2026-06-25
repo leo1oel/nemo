@@ -147,6 +147,81 @@ case "$ARG3" in
     ;;
 esac
 
+# Root/sudo sandbox: forward IS_SANDBOX into the crewmate launch. claude refuses
+# --dangerously-skip-permissions when running as root for security UNLESS IS_SANDBOX marks
+# the environment as a sandbox - and herdr starts agent panes with a sanitized environment
+# that DROPS IS_SANDBOX, so without this a crewmate's root claude refuses to launch and its
+# pane dies within ~2s, collapsing the spawn before any brief is read. Done ONLY when this
+# firstmate is actually running as root: a normal non-root host (a laptop, most servers)
+# never needs it and must not falsely claim to be sandboxed, so there the launch stays
+# exactly as before. Applied once here, so it covers ship, scout, and secondmate launches
+# alike. Default to 1 when unset so a fresh root container works with no other setup; honor
+# an already-set IS_SANDBOX, and validate it to a safe token set so the inline shell
+# assignment can never be malformed.
+case "$HARNESS" in
+  claude*)
+    if [ "$(id -u 2>/dev/null || echo)" = 0 ]; then
+      FM_SANDBOX_VAL=${IS_SANDBOX:-1}
+      case "$FM_SANDBOX_VAL" in
+        ''|*[!A-Za-z0-9_.:/-]*) FM_SANDBOX_VAL=1 ;;
+      esac
+      LAUNCH="IS_SANDBOX=$FM_SANDBOX_VAL $LAUNCH"
+    fi
+    ;;
+esac
+
+# claude_pretrust <dir>: seed claude's per-directory folder-trust for <dir> so its
+# first-launch trust dialog ("Is this a project you created or one you trust?") never
+# appears. That dialog blocks on stdin; in a freshly created worktree/home the crewmate
+# pane can reach end-of-input on the prompt and claude exits before firstmate peeks and
+# accepts it (AGENTS.md section 4), collapsing the spawn. claude records trust per project
+# directory in ~/.claude.json (projects.<abs-path>.hasTrustDialogAccepted), so add that
+# entry for <dir> before launch. The existing file is preserved (read-modify-write of one
+# entry) and replaced atomically; an flock serializes concurrent writers so neither write is
+# torn - flock is absent on macOS, where the atomic os.replace alone still prevents a torn
+# file. Best-effort and non-fatal: on any failure the spawn proceeds and the dialog can
+# still be accepted by hand. claude only.
+claude_pretrust() {
+  local dir=$1 cfg
+  [ -n "$dir" ] || return 0
+  command -v python3 >/dev/null 2>&1 || return 0
+  cfg="${CLAUDE_CONFIG_DIR:+$CLAUDE_CONFIG_DIR/.claude.json}"
+  cfg="${cfg:-$HOME/.claude.json}"
+  (
+    flock 9 2>/dev/null || true
+    python3 - "$cfg" "$dir" <<'PY' || true
+import json, os, sys, tempfile
+cfg, d = sys.argv[1], os.path.abspath(sys.argv[2])
+try:
+    with open(cfg) as f:
+        data = json.load(f)
+except Exception:
+    data = {}
+if not isinstance(data, dict):
+    data = {}
+projects = data.setdefault("projects", {})
+entry = projects.get(d)
+if not isinstance(entry, dict):
+    entry = {}
+entry.setdefault("allowedTools", [])
+entry["hasTrustDialogAccepted"] = True
+entry["hasCompletedProjectOnboarding"] = True
+projects[d] = entry
+dirn = os.path.dirname(os.path.abspath(cfg)) or "."
+fd, tmp = tempfile.mkstemp(dir=dirn, prefix=".claude.json.", suffix=".tmp")
+try:
+    with os.fdopen(fd, "w") as f:
+        json.dump(data, f, indent=2)
+    os.replace(tmp, cfg)
+except Exception:
+    try:
+        os.unlink(tmp)
+    except OSError:
+        pass
+PY
+  ) 9>"${cfg}.fm-trust.lock" 2>/dev/null || true
+}
+
 BACKEND="$FM_ROOT/bin/fm-backend.sh"
 
 # Shared herdr json helper (mirrors bin/fm-backend.sh _jget).
@@ -342,6 +417,9 @@ if [ "$KIND" = secondmate ]; then
   LAUNCH=${LAUNCH//__BRIEF__/$BRIEF_Q}
   LAUNCH="FM_ROOT_OVERRIDE= FM_STATE_OVERRIDE= FM_DATA_OVERRIDE= FM_PROJECTS_OVERRIDE= FM_HOME=$HOME_Q $LAUNCH"
 
+  # Pre-trust the home so claude's first-launch folder-trust dialog never collapses the spawn.
+  case "$HARNESS" in claude*) claude_pretrust "$HOME_PATH" ;; esac
+
   LAUNCHED=$("$BACKEND" launch "$ID" "$WS" "$HOME_PATH" "$LAUNCH") \
     || { echo "error: 'fm-backend launch' failed for secondmate $ID" >&2; exit 1; }
   HANDLE=$(printf '%s\n' "$LAUNCHED" | sed -n 's/^handle=//p')
@@ -418,6 +496,9 @@ $("$FM_ROOT/bin/fm-project-mode.sh" "$PROJ_NAME")
 EOF
 
 LAUNCH=${LAUNCH//__BRIEF__/$BRIEF}
+
+# Pre-trust the worktree so claude's first-launch folder-trust dialog never collapses the spawn.
+case "$HARNESS" in claude*) claude_pretrust "$WT" ;; esac
 
 # Start the crewmate in its worktree pane. HANDLE (the herdr pane id) is what
 # peek/send/teardown use to reach it.

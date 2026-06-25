@@ -119,9 +119,13 @@ SH
 # at the self-contained firstmate repo; FM_HOME at the active home; PATH carries the stub.
 run_fm() {
   local sb=$1; shift
+  # Sandbox claude's config so fm-spawn's claude_pretrust writes the worktree/home
+  # folder-trust entry under the sandbox, never the real ~/.claude.json.
+  mkdir -p "$sb/claude"
   PATH="$sb/bin:$PATH" \
     FM_ROOT_OVERRIDE="$sb/firstmate" \
     FM_HOME="$sb/home" \
+    CLAUDE_CONFIG_DIR="$sb/claude" \
     FM_SPAWN_NO_GUARD=1 \
     HERDR_STUB_STATE="$sb" \
     "$@"
