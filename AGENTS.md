@@ -404,22 +404,30 @@ With `--force`, teardown is the explicit discard path: it discards child work an
 ## 8. Supervision protocol
 
 The watcher is the backbone.
-Whenever at least one task is in flight, `bin/fm-watch.sh` must be running as a background task.
+Whenever at least one task is in flight, keep `bin/fm-watch.sh` running through a harness-tracked `bin/fm-watch-arm.sh` background task.
 It costs zero tokens while running and exits with one reason line when something needs you.
 It also writes each detected wake to the durable queue at `state/.wake-queue` before advancing suppression markers such as `.seen-*`, `.stale-*`, `.last-check`, or `.last-heartbeat`.
 At the start of every wake-handling turn and every recovery turn, run `bin/fm-wake-drain.sh` before peeking panes, reading status files beyond the reason line, or starting new work.
 The printed one-shot reason line is still useful, but the drained queue is the lossless backlog.
-After handling drained wakes, re-arm `bin/fm-watch.sh` before you end the turn.
-The watcher is singleton-safe: if one is already alive with a fresh liveness beacon, another invocation exits cleanly instead of creating a duplicate watcher; if the live holder's beacon is stale, the new invocation exits with an actionable failure.
-Do not pkill-and-restart the watcher as a routine operation; just arm it, and let the singleton lock no-op when appropriate.
+After handling drained wakes, re-arm the watcher before you end the turn by running `bin/fm-watch-arm.sh` as a background task.
+Arm or re-arm the watcher only through the harness's own tracked background mechanism - the one that survives the call and notifies you when the process exits - so the re-arm actually persists and the next wake reaches you.
+Never fire-and-forget the watcher with a shell `&` inside another call: that backgrounded child is reaped when the call returns, so supervision silently stops, and worse, the dying process reports a false "already running" that hides the gap.
+`bin/fm-watch-arm.sh` is self-verifying: it confirms a genuinely live watcher with a fresh beacon and prints exactly one honest status line - `watcher: started ...`, `watcher: healthy ...`, or `watcher: FAILED - no live watcher with a fresh beacon` (which exits non-zero) - so treat that line, not a process count or an unverified "already running", as the source of truth for watcher state.
+The watcher is singleton-safe: acquisition is race-proof, so under any number of concurrent arms at most one watcher ever holds this home's lock, and a duplicate that somehow starts self-evicts within one poll once it sees the lock no longer names it.
+If one is already alive with a fresh liveness beacon, another invocation exits cleanly instead of creating a duplicate watcher; if the live holder's beacon is stale, the new invocation exits with an actionable failure.
+Re-arming is the primary model: just run `bin/fm-watch-arm.sh` and let the singleton lock no-op when a healthy watcher is already alive.
+If a forced restart is ever genuinely needed, use `bin/fm-watch-arm.sh --restart`, which stops only THIS home's watcher (the pid recorded in this home's `state/.watch.lock`) and starts a fresh one.
+Never `pkill -f bin/fm-watch.sh`: that pattern matches every firstmate home's watcher, including secondmate homes that run the same script, so a broad pkill from one home kills sibling homes' watchers.
 P2/P3 of the watcher reliability design - a persistent detector daemon and blocking waiter split - are deferred; this phase intentionally preserves the current one-shot restart model.
 Waiting on the watcher is intentionally silent.
 After arming it, do not send idle progress updates to the captain; wait until it returns `signal`, `stale`, `check`, or `heartbeat`, unless the captain asks for status.
 Empty polls, elapsed waiting time, and "still no change" are tool bookkeeping, not conversational progress.
 
 ```sh
-bin/fm-watch.sh   # run in background; exits with: signal|stale|check|heartbeat
-bin/fm-wake-drain.sh   # drain queued wake records at turn start
+bin/fm-watch-arm.sh        # safe verified re-arm; run as harness-tracked background; no-ops if healthy
+bin/fm-watch-arm.sh --restart  # home-scoped forced restart; never a broad pkill
+bin/fm-watch.sh            # the watcher itself; exits with: signal|stale|check|heartbeat
+bin/fm-wake-drain.sh       # drain queued wake records at turn start
 ```
 
 On wake, in order of cheapness:
@@ -444,11 +452,12 @@ A secondmate may be sitting on its own watcher with no visible pane changes, so 
 **Watcher liveness is guarded, not just disciplined.**
 Arming the watcher is the last action of every wake-handling turn - but the protocol no longer relies on remembering that.
 While running, `fm-watch.sh` touches `state/.last-watcher-beat` every poll cycle.
-The supervision scripts (`fm-peek`, `fm-send`, `fm-spawn`, `fm-teardown`, `fm-pr-check`, `fm-promote`, `fm-review-diff`, `fm-fleet-sync`) call `bin/fm-guard.sh` first, which warns to stderr when any task is in flight (`state/*.meta` exists) but queued wakes are pending, or that beacon is missing or older than `FM_GUARD_GRACE` (default 300s).
+The supervision scripts (`fm-peek`, `fm-send`, `fm-spawn`, `fm-teardown`, `fm-pr-check`, `fm-promote`, `fm-review-diff`, `fm-fleet-sync`, `fm-update`) call `bin/fm-guard.sh` first, which warns to stderr when any task is in flight (`state/*.meta` exists) but queued wakes are pending, or that beacon is missing or older than `FM_GUARD_GRACE` (default 300s).
+The no-watcher case leads with a prominent, bordered ●-marked banner (in-flight count, beacon age, and the exact one-line re-arm command) so it reads as an alarm rather than a buried stderr line you can skim past.
 So the next time you touch the fleet with queued wakes or no watcher alive, the tool output itself tells you what to do - a pull-based guard that works on any harness, since it rides the script output you already read rather than a harness-specific hook.
 The grace window keeps normal handling (watcher briefly down between a wake and its re-arm) silent.
 If a guard warning says queued wakes are pending, drain them before doing anything else.
-If a guard warning says watcher liveness is stale, arm `bin/fm-watch.sh` after draining any queued wakes.
+If a guard warning says watcher liveness is stale, arm `bin/fm-watch-arm.sh` after draining any queued wakes.
 Watcher liveness is not enough if you are foreground-blocked.
 Whenever one or more tasks are in flight, do not run long foreground-blocking operations in your own session.
 This is about firstmate's own session: it includes a no-mistakes pipeline firstmate runs for this repo, long builds, and any other multi-minute command.
@@ -482,12 +491,12 @@ The `/afk` skill is the explicit trigger.
 **Entering afk.** Invoke the `/afk` skill.
 It sets `state/.afk` (durable - recovery re-enters afk if the flag survives a restart), ensures the daemon is running, and acknowledges.
 The daemon injects back into the captain's own herdr pane, which it finds via `HERDR_PANE_ID` (inherited when `/afk` launches it from the captain), overridable with `FM_SUPERVISOR_TARGET`.
-With afk active, do not separately arm `fm-watch.sh` - the daemon owns it; but `fm-wake-drain.sh` still runs at the start of every escalated turn as the lossless backstop.
+With afk active, do not separately arm the watcher with `fm-watch-arm.sh` or `fm-watch.sh` - the daemon owns it; but `fm-wake-drain.sh` still runs at the start of every escalated turn as the lossless backstop.
 
 **Exiting afk (the captain's contract).** When firstmate receives a message while afk is active:
 - Leading `FM_INJECT_MARK` (ASCII unit separator, 0x1f) → **internal escalation**. Stay afk, process it.
 - Message starts with `/afk` → **afk re-invocation**. Stay afk (refresh the flag).
-- Anything else → **the captain is back.** Clear `state/.afk`, stop the daemon, flush one distilled "while you were out" catch-up (drain `state/.wake-queue` + summarize any pending `state/.subsuper-escalations` and any `state/.subsuper-inject-wedged` marker), and resume full per-wake responsiveness (arm `bin/fm-watch.sh`).
+- Anything else → **the captain is back.** Clear `state/.afk`, stop the daemon, flush one distilled "while you were out" catch-up (drain `state/.wake-queue` + summarize any pending `state/.subsuper-escalations` and any `state/.subsuper-inject-wedged` marker), and resume full per-wake responsiveness (arm `bin/fm-watch-arm.sh`).
 **Bias ambiguous cases toward exit** (a present captain beats token savings; a false exit is self-correcting).
 The marker is in-band (it travels with the message text), so it does not depend on any herdr-level typed-vs-injected distinction.
 
