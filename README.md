@@ -80,7 +80,10 @@ cd firstmate && claude
 ```
 
 That is the whole install.
-On first launch the first mate detects what its toolchain is missing (herdr, no-mistakes, gh-axi, chrome-devtools-axi, lavish-axi), lists it with the exact install commands, and installs only after you say go.
+On first launch the first mate detects what its toolchain is missing (herdr, no-mistakes, gh-axi, chrome-devtools-axi, lavish-axi, tasks-axi), lists it with the exact install commands, and installs only after you say go.
+
+`tasks-axi` is optional backlog tooling: the tracked `.tasks.toml` pins its markdown backend to `data/backlog.md`, with `done_keep = 10` and an archive at `data/done-archive.md`.
+When a compatible build (0.1.1 or newer, by the probe in `bin/fm-tasks-axi-lib.sh`) is on `PATH`, the first mate routes routine backlog mutations through its verbs and keeps secondmate transfers behind `fm-backlog-handoff.sh` validation; without it, backlog bookkeeping stays manual exactly as before.
 
 **Crewmates live in herdr.**
 Each crewmate is a herdr agent pane in its own worktree workspace; watch any of them in the herdr sidebar or type into a pane to intervene, and the first mate reconciles.
@@ -213,7 +216,7 @@ FM_INJECT_SKIP=heartbeat     # |-separated wake prefixes to force-self-handle
 
 ## Development
 
-Tracked changes to firstmate itself, including `AGENTS.md`, `README.md`, `CONTRIBUTING.md`, `.github/workflows/`, `bin/`, and agent skill files, ship through the `no-mistakes` pipeline on a feature branch and require the captain's explicit merge approval.
+Tracked changes to firstmate itself, including `AGENTS.md`, `README.md`, `CONTRIBUTING.md`, `.tasks.toml`, `.github/workflows/`, `bin/`, and agent skill files, ship through the `no-mistakes` pipeline on a feature branch and require the captain's explicit merge approval.
 When supervising live crewmates, keep long validation or build work in the background so watcher wakes can still be handled.
 Human-authored pull requests targeting `main` must be raised through `git push no-mistakes`; see `CONTRIBUTING.md` for the enforced contributor workflow.
 Local `.no-mistakes/` state and test evidence stay out of this repo; `.no-mistakes.yaml` keeps evidence in a temp directory instead.

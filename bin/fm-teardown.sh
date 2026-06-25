@@ -32,6 +32,8 @@ DATA="${FM_DATA_OVERRIDE:-$FM_HOME/data}"
 SECONDMATE_REG="$DATA/secondmates.md"
 SUB_HOME_MARKER=".fm-secondmate-home"
 SUB_HOME_WS_MARKER=".fm-secondmate-home.workspace"
+# shellcheck source=bin/fm-tasks-axi-lib.sh
+. "$SCRIPT_DIR/fm-tasks-axi-lib.sh"
 "$FM_ROOT/bin/fm-guard.sh" || true
 ID=$1
 FORCE=${2:-}
@@ -44,6 +46,7 @@ HANDLE=$(grep '^handle=' "$META" | cut -d= -f2- || true)
 WS=$(grep '^workspace=' "$META" | cut -d= -f2- || true)
 HOME_PATH=$(grep '^home=' "$META" | cut -d= -f2- || true)
 HOME_WORKSPACE=$(grep '^home_workspace=' "$META" | cut -d= -f2- || true)
+PR_URL=$(grep '^pr=' "$META" | tail -1 | cut -d= -f2- || true)
 
 KIND=$(grep '^kind=' "$META" | cut -d= -f2- || true)
 [ -n "$KIND" ] || KIND=ship
@@ -69,6 +72,49 @@ default_branch() {
 meta_value() {
   local meta=$1 key=$2
   grep "^$key=" "$meta" | cut -d= -f2- || true
+}
+
+# Emit the post-teardown backlog-refresh reminder. When a compatible tasks-axi
+# (0.1.1+) is on PATH, prompt the matching `tasks-axi done` verb (which also
+# auto-prunes/archives Done) plus `tasks-axi ready`; otherwise fall back to the
+# hand-edit reminder. The secondmate retirement case keeps its data/secondmates.md
+# hint, which the verb path does not cover. Mirrors AGENTS.md section 10.
+backlog_refresh_reminder() {
+  local pr done_cmd report_path
+  if fm_tasks_axi_compatible; then
+    case "$KIND" in
+      scout)
+        report_path="data/$ID/report.md"
+        done_cmd="tasks-axi done $ID --report $report_path"
+        ;;
+      secondmate)
+        done_cmd="tasks-axi done $ID --note \"retired\""
+        ;;
+      *)
+        if [ "$MODE" = local-only ]; then
+          done_cmd="tasks-axi done $ID --note \"local main\""
+        else
+          pr=$PR_URL
+          if [ -n "$pr" ]; then
+            done_cmd="tasks-axi done $ID --pr $pr"
+          else
+            done_cmd="tasks-axi done $ID --pr PR_URL"
+          fi
+        fi
+        ;;
+    esac
+    if [ "$KIND" = secondmate ]; then
+      printf '%s\n' "🌱 Backlog: secondmate $ID retired. Run $done_cmd, update data/secondmates.md as needed, then run tasks-axi ready for dependency-cleared candidates, check date gates, and dispatch only work whose blockers are gone and date is due."
+    else
+      printf '%s\n' "🌱 Backlog: $ID just finished. Run $done_cmd, then run tasks-axi ready for dependency-cleared candidates, check date gates, and dispatch only work whose blockers are gone and date is due."
+    fi
+  else
+    if [ "$KIND" = secondmate ]; then
+      printf '%s\n' "🌱 Backlog: secondmate $ID retired. Update data/backlog.md and data/secondmates.md as needed, then re-scan Queued for items now unblocked or now time-due and dispatch what's ready."
+    else
+      printf '%s\n' "🌱 Backlog: $ID just finished. Update data/backlog.md - move $ID to Done (keep Done to the 10 most recent), then re-scan Queued for items now unblocked (a \"blocked-by: $ID\" may have just cleared) or now time-due, and dispatch what's ready."
+    fi
+  fi
 }
 
 path_is_ancestor_of() {
@@ -362,7 +408,7 @@ if [ "$KIND" = secondmate ]; then
   remove_secondmate_registry_entry "$ID"
   rm -f "$STATE/$ID.status" "$STATE/$ID.turn-ended" "$STATE/$ID.check.sh" "$STATE/$ID.meta"
   echo "teardown $ID complete (secondmate home $HOME_PATH retired)"
-  printf '%s\n' "🌱 Backlog: secondmate $ID retired. Update data/backlog.md and data/secondmates.md as needed, then re-scan Queued for items now unblocked or now time-due and dispatch what's ready."
+  backlog_refresh_reminder
   exit 0
 fi
 
@@ -378,4 +424,4 @@ if [ "$KIND" != scout ] && [ "$MODE" != local-only ]; then
   "$FM_ROOT/bin/fm-fleet-sync.sh" "$PROJ" || true
 fi
 echo "teardown $ID complete (handle $HANDLE, worktree $WT)"
-printf '%s\n' "🌱 Backlog: $ID just finished. Update data/backlog.md - move $ID to Done (keep Done to the 10 most recent), then re-scan Queued for items now unblocked (a \"blocked-by: $ID\" may have just cleared) or now time-due, and dispatch what's ready."
+backlog_refresh_reminder
