@@ -160,6 +160,16 @@ The first mate drives these; you rarely need to, but they work by hand too.
 | `fm-teardown.sh`         | Remove the worktree and close its herdr pane, or retire a secondmate home; protects ship work, requires scout reports, checks child work, and reminds backlog refresh |
 | `fm-lock.sh`             | Single-firstmate session lock                                                                                       |
 
+## Built-in skills
+
+Firstmate ships these built-in skills you invoke by name with the slash form (e.g. `/afk`).
+`no-mistakes` is a user-level prerequisite (`~/.claude/skills`), not a firstmate-shipped skill, so it is not listed here.
+
+| Skill              | What it does                                                                                                                                  |
+| ------------------ | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| `/afk`             | Enter away-mode supervision: the sub-supervisor self-handles routine wakes in bash and escalates only captain-relevant events as one batched digest, cutting supervision cost while you step away |
+| `/updatefirstmate` | Self-update the running firstmate and its secondmates to the latest from origin with fast-forward-only pulls, then re-read instructions and nudge secondmates |
+
 ## Configuration
 
 The shared orchestrator behavior lives in `AGENTS.md` - edit it like any prompt when the fleet is empty, or dispatch shared-repo edits to a crewmate while tasks are in flight.
