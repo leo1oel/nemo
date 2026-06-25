@@ -120,6 +120,21 @@ add_fork_with_pushed_branch() {
   git -C "$case_dir/project" fetch -q fork
 }
 
+# Drop a fake compatible tasks-axi (reports 0.1.1) into the case fakebin so the
+# teardown reminder routes through tasks-axi verbs instead of the hand-edit text.
+# Args: case_dir
+add_compatible_tasks_axi() {
+  local case_dir=$1
+  cat > "$case_dir/fakebin/tasks-axi" <<'SH'
+#!/usr/bin/env bash
+if [ "${1:-}" = --version ]; then
+  printf '%s\n' '0.1.1'
+fi
+exit 0
+SH
+  chmod +x "$case_dir/fakebin/tasks-axi"
+}
+
 # Run teardown with PATH mocking. Args: case_dir [extra args...]
 run_teardown() {
   local case_dir=$1; shift
@@ -242,9 +257,43 @@ test_local_only_force_overrides_unpushed() {
   pass "local-only worktree with unpushed work is torn down under --force (escape hatch)"
 }
 
+# When a compatible tasks-axi is on PATH, the teardown reminder routes through its
+# verbs (tasks-axi done ... / tasks-axi ready) instead of the manual hand-edit text,
+# and drops the manual "keep Done to the 10 most recent" pruning (tasks-axi auto-prunes).
+test_teardown_prompts_tasks_axi_done_when_compatible() {
+  local case_dir out rc
+  case_dir=$(make_case tasks-axi-reminder)
+  write_meta "$case_dir" no-mistakes ship
+  printf '%s\n' 'pr=https://github.com/example/repo/pull/7' >> "$case_dir/state/task-x1.meta"
+  wt_commit "$case_dir" "shippable work"
+  # Push the task branch to origin so the unpushed-work check passes and teardown
+  # runs to the final reminder.
+  git -C "$case_dir/wt" push -q origin fm/task-x1
+  git -C "$case_dir/project" fetch -q origin
+  add_compatible_tasks_axi "$case_dir"
+
+  set +e
+  out=$(run_teardown "$case_dir" 2> "$case_dir/stderr")
+  rc=$?
+  set -e
+
+  expect_code 0 "$rc" "tasks-axi-reminder: teardown should succeed with compatible tasks-axi"
+  printf '%s\n' "$out" | grep -F 'tasks-axi done task-x1 --pr https://github.com/example/repo/pull/7' >/dev/null \
+    || fail "tasks-axi-reminder: teardown did not prompt tasks-axi done: $out"
+  printf '%s\n' "$out" | grep -F 'tasks-axi ready' >/dev/null \
+    || fail "tasks-axi-reminder: teardown did not prompt tasks-axi ready: $out"
+  printf '%s\n' "$out" | grep -F 'check date gates' >/dev/null \
+    || fail "tasks-axi-reminder: teardown dropped the date-gate check: $out"
+  if printf '%s\n' "$out" | grep -F 'keep Done to the 10 most recent' >/dev/null; then
+    fail "tasks-axi-reminder: kept manual Done pruning in compatible tasks-axi prompt: $out"
+  fi
+  pass "teardown prompts tasks-axi backlog refresh when compatible"
+}
+
 test_local_only_fork_remote_allows
 test_local_only_truly_unpushed_refuses
 test_local_only_merged_to_local_main_allows
 test_no_mistakes_origin_remote_allows
 test_no_mistakes_truly_unpushed_refuses
 test_local_only_force_overrides_unpushed
+test_teardown_prompts_tasks_axi_done_when_compatible
