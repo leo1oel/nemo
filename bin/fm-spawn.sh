@@ -9,6 +9,8 @@
 #   see AGENTS.md section 7). --secondmate records kind=secondmate and launches in a
 #   provisioned firstmate home (a herdr worktree of $FM_ROOT seeded by fm-home-seed.sh);
 #   the default is kind=ship.
+#   Before a secondmate launch, the home is locally fast-forwarded to the primary
+#   default-branch commit when safe (no fetch); skipped syncs warn and launch unchanged.
 #   Ship/scout spawns refuse to launch after the worktree is opened unless the resolved
 #   path is a real git worktree root distinct from the project's primary checkout
 #   (prevents the firstmate-on-itself worktree tangle; see fm-tangle-lib.sh).
@@ -39,6 +41,8 @@ DATA="${FM_DATA_OVERRIDE:-$FM_HOME/data}"
 PROJECTS="${FM_PROJECTS_OVERRIDE:-$FM_HOME/projects}"
 SUB_HOME_MARKER=".fm-secondmate-home"
 SUB_HOME_WS_MARKER=".fm-secondmate-home.workspace"
+# shellcheck source=bin/fm-ff-lib.sh
+. "$SCRIPT_DIR/fm-ff-lib.sh"   # primary_head_commit + ff_target for the secondmate local-HEAD sync
 # Skip the watcher guard when re-exec'd for one pair of a batch (FM_SPAWN_NO_GUARD is
 # set by the batch loop below), so the guard runs once for the batch, not once per pair.
 [ -n "${FM_SPAWN_NO_GUARD:-}" ] || "$FM_ROOT/bin/fm-guard.sh" || true
@@ -388,6 +392,26 @@ if [ "$KIND" = secondmate ]; then
   # beside the marker; a plain directory home has none, so spawn opens one on the fly.
   HOME_WORKSPACE=$(cat "$HOME_PATH/$SUB_HOME_WS_MARKER" 2>/dev/null || true)
   WT="$HOME_PATH"
+  # Local-HEAD sync: before launch, fast-forward this secondmate's home worktree to
+  # the PRIMARY checkout's current default-branch commit, so a freshly spawned or
+  # recovery-respawned secondmate always runs the primary's version (AGENTS.md spawn
+  # section). Purely local - no fetch: the home is a herdr worktree of this same repo
+  # on lease branch secondmate-<id> and already holds the commit in the shared object
+  # store. ff-only and guarded; a dirty, diverged, or wrong-branch home is left
+  # untouched and launches as-is. The agent re-reads AGENTS.md fresh on launch, so no
+  # nudge is needed here.
+  if sm_primary_head=$(primary_head_commit "$FM_ROOT"); then
+    sm_ff_out=$(ff_target "$HOME_PATH" "secondmate $ID" "$sm_primary_head" "secondmate-$ID" yes yes 2>&1 || true)
+    case "$sm_ff_out" in
+      *': skipped:'*)
+        sm_ff_line=$(first_line "$sm_ff_out")
+        sm_ff_reason=${sm_ff_line#"secondmate $ID: skipped: "}
+        echo "warning: secondmate $ID sync skipped before launch: $sm_ff_reason" >&2
+        ;;
+    esac
+  else
+    echo "warning: secondmate $ID sync skipped before launch: primary default-branch commit cannot be resolved" >&2
+  fi
   if [ -f "$HOME_PATH/data/charter.md" ]; then
     BRIEF="$HOME_PATH/data/charter.md"
   else

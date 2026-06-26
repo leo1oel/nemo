@@ -18,6 +18,10 @@
 # advances only that worktree's branch and never touches any other worktree's
 # checkout or the shared default branch.
 #
+# The fast-forward mechanics live in bin/fm-ff-lib.sh (base_mode "origin" here);
+# the same library drives the local-HEAD secondmate sync used by fm-spawn.sh, so
+# there is one ff implementation, not several.
+#
 # It does NOT re-read AGENTS.md or nudge secondmates itself - those are LLM /
 # herdr actions the skill performs. The script's job is the safe git mechanics
 # plus a parseable summary telling the caller what to do next:
@@ -33,7 +37,8 @@ FM_ROOT="${FM_ROOT_OVERRIDE:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 FM_HOME="${FM_HOME:-${FM_ROOT_OVERRIDE:-$FM_ROOT}}"
 STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
 SECONDMATES_MD="$FM_HOME/data/secondmates.md"
-SUB_HOME_MARKER=".fm-secondmate-home"
+# shellcheck source=bin/fm-ff-lib.sh
+. "$SCRIPT_DIR/fm-ff-lib.sh"
 
 "$SCRIPT_DIR/fm-guard.sh" || true
 
@@ -45,297 +50,13 @@ if [ "${1:-}" = "--help" ] || [ "${1:-}" = "-h" ]; then
 fi
 [ $# -eq 0 ] || { usage; exit 1; }
 
-# --- helpers ---------------------------------------------------------------
-
-first_line() {
-  printf '%s\n' "$1" | sed -n '1s/[[:space:]]\{1,\}/ /g;1p'
-}
-
-default_branch() {
-  local dir=$1 ref branch
-  ref=$(git -C "$dir" symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null || true)
-  if [ -n "$ref" ]; then
-    echo "${ref#origin/}"
-    return 0
-  fi
-  for branch in main master; do
-    if git -C "$dir" show-ref --verify --quiet "refs/heads/$branch"; then
-      echo "$branch"
-      return 0
-    fi
-  done
-  return 1
-}
-
-resolve_path() {
-  # Resolve to a canonical absolute path, falling back to the literal input
-  # when the directory does not exist (so callers can still dedup/skip on it).
-  ( cd "$1" 2>/dev/null && pwd -P ) || printf '%s\n' "$1"
-}
-
-resolved_existing_dir() {
-  local path=$1
-  [ -d "$path" ] || return 1
-  cd "$path" && pwd -P
-}
-
-path_is_ancestor_of() {
-  local ancestor=$1 path=$2
-  [ -n "$ancestor" ] || return 1
-  [ -n "$path" ] || return 1
-  [ "$ancestor" != "$path" ] || return 1
-  case "$path" in
-    "$ancestor"/*) return 0 ;;
-  esac
-  return 1
-}
-
-VALIDATED_HOME=""
-VALIDATION_ERROR=""
-
-validate_operational_dirs() {
-  local abs_home=$1 abs_active_home=$2 abs_root=$3 name dir abs_dir
-  for name in data state config projects; do
-    dir="$abs_home/$name"
-    if [ -L "$dir" ] && [ ! -e "$dir" ]; then
-      VALIDATION_ERROR="secondmate $name directory must resolve inside the secondmate home"
-      return 1
-    fi
-    if [ -d "$dir" ]; then
-      abs_dir=$(cd "$dir" && pwd -P) || {
-        VALIDATION_ERROR="secondmate $name directory cannot be resolved"
-        return 1
-      }
-    elif [ -e "$dir" ]; then
-      VALIDATION_ERROR="secondmate $name path is not a directory"
-      return 1
-    else
-      abs_dir="$abs_home/$name"
-    fi
-    if ! path_is_ancestor_of "$abs_home" "$abs_dir"; then
-      VALIDATION_ERROR="secondmate $name directory must resolve inside the secondmate home"
-      return 1
-    fi
-    if [ "$abs_dir" = "$abs_active_home" ] || path_is_ancestor_of "$abs_active_home" "$abs_dir"; then
-      VALIDATION_ERROR="secondmate $name directory cannot be inside the active firstmate home"
-      return 1
-    fi
-    if [ "$abs_dir" = "$abs_root" ] || path_is_ancestor_of "$abs_root" "$abs_dir"; then
-      VALIDATION_ERROR="secondmate $name directory cannot be inside the firstmate repo"
-      return 1
-    fi
-  done
-}
-
-validate_secondmate_home() {
-  local id=$1 home=$2 abs_home abs_active_home abs_root marker_id
-  VALIDATED_HOME=""
-  VALIDATION_ERROR=""
-  abs_home=$(resolved_existing_dir "$home") || {
-    VALIDATION_ERROR="not a directory"
-    return 1
-  }
-  abs_active_home=$(resolved_existing_dir "$FM_HOME") || {
-    VALIDATION_ERROR="active firstmate home is not a directory"
-    return 1
-  }
-  abs_root=$(resolved_existing_dir "$FM_ROOT") || {
-    VALIDATION_ERROR="firstmate repo is not a directory"
-    return 1
-  }
-  if [ "$abs_home" = "/" ]; then
-    VALIDATION_ERROR="secondmate home cannot be the filesystem root"
-    return 1
-  fi
-  if [ "$abs_home" = "$abs_active_home" ]; then
-    VALIDATION_ERROR="secondmate home cannot be the active firstmate home"
-    return 1
-  fi
-  if [ "$abs_home" = "$abs_root" ]; then
-    VALIDATION_ERROR="secondmate home cannot be the firstmate repo"
-    return 1
-  fi
-  if path_is_ancestor_of "$abs_active_home" "$abs_home"; then
-    VALIDATION_ERROR="secondmate home cannot be inside the active firstmate home"
-    return 1
-  fi
-  if path_is_ancestor_of "$abs_root" "$abs_home"; then
-    VALIDATION_ERROR="secondmate home cannot be inside the firstmate repo"
-    return 1
-  fi
-  if path_is_ancestor_of "$abs_home" "$abs_active_home"; then
-    VALIDATION_ERROR="secondmate home cannot be an ancestor of the active firstmate home"
-    return 1
-  fi
-  if path_is_ancestor_of "$abs_home" "$abs_root"; then
-    VALIDATION_ERROR="secondmate home cannot be an ancestor of the firstmate repo"
-    return 1
-  fi
-  validate_operational_dirs "$abs_home" "$abs_active_home" "$abs_root" || return 1
-  if [ -L "$abs_home/$SUB_HOME_MARKER" ]; then
-    VALIDATION_ERROR="secondmate marker must not be a symlink"
-    return 1
-  fi
-  if [ ! -f "$abs_home/$SUB_HOME_MARKER" ]; then
-    VALIDATION_ERROR="not a seeded secondmate home"
-    return 1
-  fi
-  marker_id=$(cat "$abs_home/$SUB_HOME_MARKER" 2>/dev/null || true)
-  if [ "$marker_id" != "$id" ]; then
-    VALIDATION_ERROR="marked for secondmate ${marker_id:-unknown}, expected $id"
-    return 1
-  fi
-  if [ ! -f "$abs_home/AGENTS.md" ]; then
-    VALIDATION_ERROR="not a firstmate home (missing AGENTS.md)"
-    return 1
-  fi
-  if [ ! -d "$abs_home/bin" ]; then
-    VALIDATION_ERROR="not a firstmate home (missing bin/)"
-    return 1
-  fi
-  VALIDATED_HOME="$abs_home"
-}
-
-# A single fetch refreshes every worktree that shares an object store, so fetch
-# each distinct git-common-dir at most once.
-FETCHED=""
-fetch_once() {
-  local dir=$1 common
-  common=$(git -C "$dir" rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)
-  if [ -n "$common" ]; then
-    case " $FETCHED " in
-      *" $common "*) return 0 ;;
-    esac
-  fi
-  if git -C "$dir" fetch origin --prune --quiet 2>/dev/null; then
-    [ -n "$common" ] && FETCHED="$FETCHED $common"
-    return 0
-  fi
-  return 1
-}
-
-# Which watched instruction paths changed between HEAD and BASE (comma list).
-# These are the files a running agent actually reads or runs: its instructions
-# (AGENTS.md, which CLAUDE.md symlinks), its skills, and its tooling (bin/).
-changed_instr() {
-  local dir=$1 base=$2 p out=""
-  for p in AGENTS.md bin .agents/skills; do
-    if ! git -C "$dir" diff --quiet HEAD "$base" -- "$p" 2>/dev/null; then
-      out="$out${out:+, }$p"
-    fi
-  done
-  printf '%s' "$out"
-}
-
-dirty_status() {
-  local dir=$1 ignore_seed_marker=${2:-no}
-  if [ "$ignore_seed_marker" = yes ]; then
-    git -C "$dir" status --porcelain 2>/dev/null | awk -v marker="?? $SUB_HOME_MARKER" '$0 != marker { print; exit }'
-  else
-    git -C "$dir" status --porcelain 2>/dev/null | head -1
-  fi
-}
-
-# Fast-forward one target to origin/<default>. Prints its status line. The
-# target may be checked out on the default branch, on a lease branch (a herdr
-# secondmate home's `secondmate-<id>`), or - when allow_detached=yes - at a
-# detached HEAD; in every case the fast-forward advances only that checkout's
-# HEAD to origin/<default>. Sets globals for the caller:
-#   FF_STATUS = updated|current|skipped
-#   FF_INSTR  = comma list of changed instruction paths (only when updated)
-FF_STATUS=""
-FF_INSTR=""
-ff_target() {
-  local dir=$1 label=$2 lease_branch=${3:-} allow_detached=${4:-no} ignore_seed_marker=${5:-no}
-  FF_STATUS="skipped"
-  FF_INSTR=""
-
-  if [ ! -d "$dir" ]; then
-    echo "$label: skipped: not a directory"
-    return 0
-  fi
-  if ! git -C "$dir" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-    echo "$label: skipped: not a git repo"
-    return 0
-  fi
-  if ! git -C "$dir" remote get-url origin >/dev/null 2>&1; then
-    echo "$label: skipped: no origin remote"
-    return 0
-  fi
-  if ! fetch_once "$dir"; then
-    echo "$label: skipped: fetch failed"
-    return 0
-  fi
-
-  local default base cur instr local_rev remote_rev before after out
-  default=$(default_branch "$dir") || {
-    echo "$label: skipped: cannot determine default branch"
-    return 0
-  }
-  base="origin/$default"
-  if ! git -C "$dir" rev-parse --verify --quiet "$base^{commit}" >/dev/null; then
-    echo "$label: skipped: $base does not exist"
-    return 0
-  fi
-
-  cur=$(git -C "$dir" symbolic-ref --short HEAD 2>/dev/null || echo "")
-  if [ -z "$cur" ]; then
-    if [ "$allow_detached" != yes ]; then
-      echo "$label: skipped: detached HEAD, expected $default"
-      return 0
-    fi
-  else
-    # On a branch: accept the default branch, or the lease branch when given.
-    if [ "$cur" != "$default" ] && { [ -z "$lease_branch" ] || [ "$cur" != "$lease_branch" ]; }; then
-      echo "$label: skipped: on $cur, expected ${lease_branch:-$default}"
-      return 0
-    fi
-  fi
-
-  if [ -n "$(dirty_status "$dir" "$ignore_seed_marker")" ]; then
-    echo "$label: skipped: dirty working tree"
-    return 0
-  fi
-
-  local_rev=$(git -C "$dir" rev-parse HEAD 2>/dev/null) || {
-    echo "$label: skipped: cannot read HEAD"
-    return 0
-  }
-  remote_rev=$(git -C "$dir" rev-parse "$base" 2>/dev/null) || {
-    echo "$label: skipped: cannot read $base"
-    return 0
-  }
-  if [ "$local_rev" = "$remote_rev" ]; then
-    FF_STATUS="current"
-    echo "$label: already current"
-    return 0
-  fi
-  if ! git -C "$dir" merge-base --is-ancestor HEAD "$base" 2>/dev/null; then
-    echo "$label: skipped: diverged from $base"
-    return 0
-  fi
-
-  instr=$(changed_instr "$dir" "$base")
-  before=$(git -C "$dir" rev-parse --short HEAD)
-  if ! out=$(git -C "$dir" merge --ff-only "$base" 2>&1); then
-    echo "$label: skipped: fast-forward failed: $(first_line "$out")"
-    return 0
-  fi
-  after=$(git -C "$dir" rev-parse --short HEAD)
-  FF_STATUS="updated"
-  FF_INSTR="$instr"
-  if [ -n "$instr" ]; then
-    echo "$label: updated $before..$after (instructions changed: $instr)"
-  else
-    echo "$label: updated $before..$after"
-  fi
-  return 0
-}
+# Helpers (default_branch, validate_secondmate_home, ff_target, ...) live in
+# bin/fm-ff-lib.sh, sourced above. This script provides the origin-sync flow.
 
 # --- main firstmate repo ---------------------------------------------------
 
 reread_firstmate="no"
-ff_target "$FM_ROOT" "firstmate" "" no no
+ff_target "$FM_ROOT" "firstmate" origin "" no no
 if [ "$FF_STATUS" = "updated" ] && [ -n "$FF_INSTR" ]; then
   reread_firstmate="yes"
 fi
@@ -364,7 +85,7 @@ process_secondmate() {
 
   # A herdr secondmate home is leased on branch `secondmate-<id>`; accept that or
   # a detached/default checkout, and fast-forward it to origin/<default>.
-  ff_target "$home_real" "secondmate $id" "secondmate-$id" yes yes
+  ff_target "$home_real" "secondmate $id" origin "secondmate-$id" yes yes
   if [ "$FF_STATUS" = "updated" ] && [ -n "$nudge" ]; then
     nudge_targets="$nudge_targets $nudge"
   fi
