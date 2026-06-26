@@ -117,7 +117,7 @@ Project clones are kept fresh per task: `bin/fm-spawn.sh` fast-forwards a projec
 ## 4. The crewmate harness (Claude Code)
 
 Crewmates run on Claude Code; this fork is Claude-only.
-The mechanics (launch command, autonomy flag, turn-end hook) live in `bin/fm-spawn.sh`; the supervision knowledge is below.
+The launch mechanics (launch command, autonomy flag, turn-end hook) live in `bin/fm-spawn.sh`.
 
 | Fact | Value |
 |---|---|
@@ -126,15 +126,8 @@ The mechanics (launch command, autonomy flag, turn-end hook) live in `bin/fm-spa
 | Interrupt | single Escape |
 | Skill invocation | `/<skill>` (e.g. `/no-mistakes`) |
 
-First launch in a fresh worktree (or first ever on a machine) may show a trust or bypass-permissions confirmation.
-After every spawn, peek the pane within ~20s; if such a dialog is showing, accept it with `bin/fm-send.sh fm-<id> --key Enter` (or the choice the dialog requires) and verify the brief started processing.
-
-Ghost text (prompt suggestions): claude renders a predicted-next-prompt suggestion as dim/faint text inside an otherwise-empty composer after a turn completes.
-A plain pane read cannot tell that ghost text apart from text a human typed, so left unhandled it makes firstmate misread an idle composer as holding pending input.
-Firstmate launches every claude crewmate and secondmate with `CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false` (a per-launch env prefix in `bin/fm-spawn.sh`, scoped to firstmate-launched agents - it never touches the captain's global config), which disables the interactive ghost text at the source.
-The CLI's `--prompt-suggestions` flag is print/SDK-mode only and does NOT suppress the interactive composer ghost text (verified empirically on v2.1.186), so the env var is the correct control.
-As defense in depth for any pane that flag cannot reach (such as the captain's own firstmate composer the away-mode daemon reads), the composer reader in `bin/fm-herdr-lib.sh` captures the pane WITH ANSI styling (`herdr pane read --format ansi`), drops dim/faint (SGR 2) runs, and ignores them, so only normal-intensity typed text counts as pending input.
-That styled capture is internal to the boolean detector only; `fm-peek` and every other human/LLM-facing read path stay plain `herdr pane read` with no escape codes.
+The supervision knowledge - the trust/bypass-permissions dialog, root/sudo `IS_SANDBOX` forwarding, and the dim/faint ghost-text quirk and its detector - lives in the `harness-adapters` skill; load it before any harness-specific operation.
+After every spawn, peek the pane within ~20s and accept any trust/bypass dialog per that skill, then verify the brief started processing.
 
 ## 5. Recovery (run at every session start)
 
@@ -232,36 +225,14 @@ If `no-mistakes doctor` reports problems, fix the environment (auth, daemon) bef
 
 ### Secondmate routing table
 
-`data/secondmates.md` is the secondmate routing table.
-Every persistent secondmate has one line:
+`data/secondmates.md` is the secondmate routing table. Every persistent secondmate has one line:
 
 ```markdown
 - <id> - <charter summary> (home: <absolute-home-path>; scope: <natural-language responsibility>; projects: <project-a>, <project-b>; added <date>)
 ```
 
-The `scope:` field is used during intake; the `projects:` field is a non-exclusive clone list, not ownership.
-Use `bin/fm-home-seed.sh <id> <home|-> <project>...` after scaffolding the charter to provision the persistent home and registry entry.
-A secondmate home is an isolated firstmate home.
-With `-`, `fm-home-seed.sh` provisions a fresh herdr worktree of the firstmate repo as the home and records its herdr workspace beside the home marker; herdr never recycles a worktree, so the home survives with no live process across restarts and is removed only on explicit retirement or seed rollback.
-An explicit `<home>` path argument stays a plain directory home (a git clone, no herdr worktree).
-The charter must be filled before seeding; direct seed without a preexisting brief requires `FM_SECONDMATE_CHARTER`.
-Seeding is transactional: if validation, cloning, no-mistakes initialization, or registry update fails, generated briefs, new homes, new project clones, and registry edits are rolled back.
-`bin/fm-home-seed.sh validate` refuses duplicate ids, duplicate homes, and nested or overlapping homes.
-Secondmate project lists may include `no-mistakes` and `direct-PR` projects only; `local-only` projects stay with the main firstmate.
-For `no-mistakes` projects, seeding initializes only projects newly cloned into a secondmate home and refuses to mutate a preexisting clone that is not already initialized.
-
-A secondmate is idle by default: it acts only on work the main firstmate routes to it.
-On startup and restart it runs recovery solely to reconcile work that is already its own - in-flight crewmates, tracked backlog items, and durable watches in its home - and then waits silently for routed work.
-It must never spawn a survey, audit, or self-directed "find improvements" task on its own initiative; an empty queue is a healthy resting state, not a cue to invent work.
-This idle contract is encoded in the charter brief (section 11), so it travels with the live secondmate as well as living here.
-
-**Hand off in-scope backlog on creation.**
-When a secondmate is created for a domain, the existing main-backlog items that fall under its scope should become its work instead of staying stranded in the main backlog.
-Scope-matching is firstmate's judgment against the secondmate's natural-language scope, not a keyword rule: read `data/backlog.md`, pick the queued items that fit the new scope, and move them with `bin/fm-backlog-handoff.sh <secondmate-id> <item-key>...`.
-The helper resolves the secondmate home from `data/secondmates.md` and mechanically moves each named item from the main `data/backlog.md` into the secondmate home's `data/backlog.md`, preserving the line and its section, so the item is neither duplicated nor lost.
-It refuses `## In flight` entries because active task ownership also lives in herdr and `state/`.
-It is idempotent (an item already in the secondmate backlog is skipped) and refuses any destination that is not a genuine seeded firstmate home with safe operational directories and a matching `.fm-secondmate-home` marker, so a move can never land in a project.
-Do not hand off `local-only` items: that work stays with the main firstmate (section 7).
+Creating, seeding (`fm-home-seed.sh`), the idle-by-default contract, and in-scope backlog handoff (`fm-backlog-handoff.sh`) live in the `secondmate-provisioning` skill; load it when promoting a domain to a persistent secondmate or recovering a dead one.
+Constraints that affect routing decisions made here: route by the nature of the task against each `scope:` (a `projects:` clone list is non-exclusive, not ownership); secondmate project lists may include `no-mistakes` and `direct-PR` projects only, never `local-only` (that work stays with the main firstmate); and a secondmate is idle by default - never route it survey/audit busywork, and an empty queue is healthy.
 
 ## 7. Task lifecycle
 
@@ -323,7 +294,7 @@ Worktrees start at detached HEAD on a clean default branch; ship briefs tell the
 For `kind=secondmate`, the same script launches in the registered or explicit firstmate home instead of creating a per-task worktree, reuses the home's herdr workspace (opening one for a plain-directory home), uses the home's `data/charter.md` as the launch prompt, installs no turn-end hook (the secondmate runs its own watcher), and records `home=`, `home_workspace=`, and `projects=` alongside `mode=secondmate`, `yolo=off`.
 Before a secondmate launch, the script fast-forwards the home worktree to the primary checkout's current default-branch commit by a purely local fast-forward (no fetch), so a freshly spawned or recovery-respawned secondmate always runs the primary's version of `AGENTS.md`, `bin/`, and the skills; the home is a herdr worktree of this same repo, so the commit is already present in the shared object store.
 The sync is ff-only and guarded exactly like self-update (`bin/fm-ff-lib.sh`): a dirty, diverged, or wrong-branch home is left untouched and launches as-is with a one-line warning, never force-moved.
-After spawning, peek the pane to confirm the crewmate is processing the brief (and handle any trust dialog per section 4).
+After spawning, peek the pane to confirm the crewmate is processing the brief (and handle any trust dialog per the `harness-adapters` skill).
 Add the task to `data/backlog.md` under In flight.
 
 ### Supervise
@@ -480,16 +451,10 @@ Token discipline: status files before panes; default peeks to 40 lines; never st
 The context-% shown in a peek is not actionable as crew health; ignore it and intervene only on real signals (`signal`, `stale`, `needs-decision`, `blocked`), looping or confusion in the pane, or a question the brief already answers.
 Silence is the correct state while a healthy background watcher is waiting.
 
-### Stuck-crewmate playbook (escalate in order)
+### Stuck-crewmate playbook
 
-1. Peek the pane.
-2. Crewmate is waiting on a question its brief already answers: answer in one line via fm-send.
-3. Crewmate is confused or looping: interrupt with the adapter's interrupt key (the crewmate's harness is recorded as `harness=` in `state/<id>.meta`; e.g. `bin/fm-send.sh fm-<id> --key Escape`), then redirect with one corrective line.
-4. Crewmate is genuinely wedged after redirection: exit the agent with the adapter's exit command, relaunch with the same brief plus a `progress so far` note you append to it.
-   Genuine wedging means looping, unresponsive, repeating the same obstacle, or truly dead.
-   A low context reading is not wedging; modern harnesses auto-compact and keep going.
-   The worktree and commits persist; this is cheap.
-5. Second relaunch fails too: write `failed` to backlog, tell the captain with evidence.
+When a direct report is stale, looping, confused, asking a question its brief already answers, unresponsive, or a steer failed to land, follow the `stuck-crewmate-recovery` skill: peek -> one-line steer -> interrupt -> relaunch with a `progress so far` note -> `failed` status with evidence.
+Load it before sending an interrupt or exit; the crewmate's harness is recorded as `harness=` in `state/<id>.meta`.
 
 ### Sub-supervisor (presence-gated via `/afk`)
 
@@ -535,7 +500,7 @@ Reaches the captain immediately:
 - Work ready for review, with the full PR URL.
 - Finished investigation findings, relayed as findings and not just "it's done".
 - Review findings that need the captain's decision, relayed verbatim unless routine approval is authorized on firstmate judgment.
-- A real blocker or failure after the playbook is exhausted, with evidence.
+- A real blocker or failure after the `stuck-crewmate-recovery` playbook is exhausted, with evidence.
 - Anything destructive, irreversible, or security-sensitive.
 - A needed credential or login.
 
