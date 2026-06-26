@@ -118,14 +118,14 @@ else
 fi
 
 # The verified launch command per adapter. The knowledge half of each adapter
-# (busy signature, exit command, dialogs, quirks) lives in AGENTS.md section 4.
+# (busy signature, exit command, dialogs, quirks) lives in the harness-adapters skill.
 launch_template() {
   # shellcheck disable=SC2016  # single quotes are deliberate: $(cat ...) expands in the crewmate pane, not here
   case "$1" in
     # CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false disables claude's interactive
     # predicted-next-prompt ghost text, which renders as dim/faint text inside an
     # otherwise-empty composer and would otherwise read like real typed input when
-    # firstmate reads the pane (see AGENTS.md section 4). It is a per-launch env
+    # firstmate reads the pane (see the harness-adapters skill). It is a per-launch env
     # prefix scoped to this firstmate-launched agent; it never touches the captain's
     # global config. The CLI's --prompt-suggestions flag is print/SDK-mode only and
     # does NOT suppress the interactive ghost text (verified empirically), so the env
@@ -181,7 +181,7 @@ esac
 # first-launch trust dialog ("Is this a project you created or one you trust?") never
 # appears. That dialog blocks on stdin; in a freshly created worktree/home the crewmate
 # pane can reach end-of-input on the prompt and claude exits before firstmate peeks and
-# accepts it (AGENTS.md section 4), collapsing the spawn. claude records trust per project
+# accepts it (the harness-adapters skill), collapsing the spawn. claude records trust per project
 # directory in ~/.claude.json (projects.<abs-path>.hasTrustDialogAccepted), so add that
 # entry for <dir> before launch. The existing file is preserved (read-modify-write of one
 # entry) and replaced atomically; an flock serializes concurrent writers so neither write is
