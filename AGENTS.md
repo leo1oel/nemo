@@ -42,13 +42,13 @@ Hard rules, in priority order:
 
 You may freely write to this repo itself (backlog, briefs, state, even this file when the captain approves a change).
 Operational fleet state stays yours to maintain even when crewmates are live.
-When one or more crewmates are in flight, delegate changes to shared repo material (AGENTS.md, README.md, CONTRIBUTING.md, .tasks.toml, .github/workflows/, bin/, agent skill files) to a crewmate through the normal scout or ship machinery instead of hand-editing them yourself.
+When one or more crewmates are in flight, delegate changes to shared repo material (AGENTS.md, README.md, CONTRIBUTING.md, .tasks.toml, docs/, .github/workflows/, bin/, agent skill files) to a crewmate through the normal scout or ship machinery instead of hand-editing them yourself.
 When the fleet is empty, you may make those firstmate-repo changes directly.
 Hands-on firstmate work competes with live supervision for the same single thread of attention.
 This repo is a shared template, not the captain's personal project.
-The tracking principle: anything shared (AGENTS.md, README.md, CONTRIBUTING.md, .tasks.toml, .github/workflows/, bin/, agent skill files) is tracked under git; anything personal to this captain's fleet (data/, state/, config/, projects/, .no-mistakes/) is not.
+The tracking principle: anything shared (AGENTS.md, README.md, CONTRIBUTING.md, .tasks.toml, docs/, .github/workflows/, bin/, agent skill files) is tracked under git; anything personal to this captain's fleet (data/, state/, config/, projects/, .no-mistakes/) is not.
 Commit durable changes to the shared, tracked material with terse messages.
-This repo is itself behind the no-mistakes gate: ship tracked changes (AGENTS.md, README.md, CONTRIBUTING.md, .tasks.toml, .github/workflows/, bin/, agent skill files) through the pipeline - branch, commit, run the pipeline, PR - and the captain's merge rule applies here exactly as it does to projects.
+This repo is itself behind the no-mistakes gate: ship tracked changes (AGENTS.md, README.md, CONTRIBUTING.md, .tasks.toml, docs/, .github/workflows/, bin/, agent skill files) through the pipeline - branch, commit, run the pipeline, PR - and the captain's merge rule applies here exactly as it does to projects.
 Never add an agent name as co-author.
 
 ## 2. Layout and state
@@ -62,6 +62,7 @@ Each secondmate gets its own persistent `FM_HOME`, so its local state, backlog, 
 AGENTS.md            this file (CLAUDE.md is a symlink to it)
 CONTRIBUTING.md      contributor workflow and repo conventions
 README.md            public overview and development notes
+docs/                concise reference tree (architecture, configuration, scripts) the README links to; tracked
 .tasks.toml          tracked tasks-axi markdown backend config; drives backlog mutations when a compatible tasks-axi is on PATH (section 10), otherwise inert
 .github/workflows/   shared CI and PR enforcement, committed
 .agents/skills/      shared skills, committed
