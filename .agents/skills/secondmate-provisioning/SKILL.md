@@ -45,6 +45,14 @@ On startup and restart it runs recovery solely to reconcile work that is already
 It must never spawn a survey, audit, or self-directed "find improvements" task on its own initiative; an empty queue is a healthy resting state, not a cue to invent work.
 This idle contract is encoded in the charter brief, so it travels with the live secondmate.
 
+## Replies route via the status path
+
+A secondmate is itself a firstmate, so a request relayed to it reaches it in its own chat, which the main firstmate never reads.
+`fm-send` to a bare `fm-<id>` whose meta records `kind=secondmate` therefore prepends a from-firstmate marker (`bin/fm-marker-lib.sh`: the label `[fm-from-firstmate]` followed by an untypable separator).
+The charter tells the secondmate to recognize that marker and return its answer via the status file - a status line for a terse result, or a doc under its home plus a status pointer (the scout-report pattern) for a detailed one - never only in chat.
+An unmarked message is the captain typing directly: it stays conversational captain intervention.
+When you route work to a secondmate, read its answer on the status/doc path, not by peeking its chat.
+
 ## Hand off in-scope backlog on creation
 
 When a secondmate is created for a domain, the existing main-backlog items that fall under its scope should become its work instead of staying stranded in the main backlog.

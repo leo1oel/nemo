@@ -17,19 +17,32 @@
 # footer appears, so an immediate peek would otherwise see the stale idle pane.
 # The pause is fm-send-only; the shared submit core (used by the away-mode daemon,
 # which only needs "submitted") does not pay it, and the --key path is unaffected.
+#
+# From-firstmate marker: when the resolved target is a bare `fm-<id>` whose meta
+# records kind=secondmate, the text is prefixed with the from-firstmate marker
+# (bin/fm-marker-lib.sh) so the secondmate routes its reply via its status file
+# or a status-pointed doc instead of stranding it in chat the main firstmate
+# never reads. A raw herdr pane handle and the --key path are never marked - their
+# behavior is unchanged.
 set -eu
 
 FM_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# Resolve meta from the active home (a secondmate steers its own crewmates from its
+# own home), honoring FM_HOME / FM_STATE_OVERRIDE like every other supervision script.
+FM_HOME="${FM_HOME:-${FM_ROOT_OVERRIDE:-$FM_ROOT}}"
+STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
 
 # shellcheck source=bin/fm-herdr-lib.sh
 . "$FM_ROOT/bin/fm-herdr-lib.sh"
+# shellcheck source=bin/fm-marker-lib.sh
+. "$FM_ROOT/bin/fm-marker-lib.sh"
 
 "$FM_ROOT/bin/fm-guard.sh" || true
 
 ARG=${1:?usage: fm-send.sh <crewmate> <text...>}
 shift
 ID=${ARG#fm-}
-META="$FM_ROOT/state/$ID.meta"
+META="$STATE/$ID.meta"
 if [ -f "$META" ]; then
   HANDLE=$(sed -n 's/^handle=//p' "$META")
 else
@@ -37,13 +50,26 @@ else
 fi
 [ -n "$HANDLE" ] || { echo "error: no handle for $ARG" >&2; exit 1; }
 
+# Mark a from-firstmate -> secondmate request. Only a bare `fm-<id>` target whose
+# meta records kind=secondmate is marked: the secondmate then routes its reply via
+# the status path (see fm-marker-lib.sh). A raw herdr pane handle and the --key
+# path are left unmarked.
+MARK_PREFIX=""
+case "$ARG" in
+  fm-*)
+    if [ -f "$META" ] && grep -q '^kind=secondmate$' "$META" 2>/dev/null; then
+      MARK_PREFIX="$FM_FROMFIRST_MARK"
+    fi
+    ;;
+esac
+
 BE="$FM_ROOT/bin/fm-backend.sh"
 _send_enter() { "$BE" send-key "$1" Enter; }
 
 if [ "${1:-}" = "--key" ]; then
   "$BE" send-key "$HANDLE" "$2"
 else
-  if ! "$BE" send-text "$HANDLE" "$*"; then
+  if ! "$BE" send-text "$HANDLE" "$MARK_PREFIX$*"; then
     echo "error: text not sent to $ARG (herdr pane send-text failed)" >&2
     exit 1
   fi
