@@ -24,7 +24,8 @@ Read each script's header comment before first use.
 | `fm-wake-drain.sh`       | Atomically drain queued watcher wakes before handling supervision work                                              |
 | `fm-supervise-daemon.sh` | Optional away-mode sub-supervisor: wraps the watcher, self-handles routine wakes, escalates only captain-relevant events as one batched herdr-pane digest; presence-gated by `/afk` |
 | `fm-backend.sh`          | herdr backend abstraction: open/launch/read/send/kill panes and worktrees                                          |
-| `fm-send.sh`             | Send one literal line (or `--key Escape`) to a crewmate pane; settles after a text submit                          |
+| `fm-send.sh`             | Send one literal line (or `--key Escape`) to a crewmate pane; settles after a text submit; marks from-firstmate requests to a `kind=secondmate` target so the reply routes via the status path |
+| `fm-marker-lib.sh`       | The from-firstmate request marker ([fm-from-firstmate] + an untypable separator) that tells a secondmate a relayed request apart from a captain-typed message |
 | `fm-peek.sh`             | Print a bounded tail of a crewmate pane                                                                             |
 | `fm-pr-check.sh`         | Record a PR-ready task and arm the watcher's merge poll                                                             |
 | `fm-promote.sh`          | Promote a scout task in place so it becomes a protected ship task                                                   |

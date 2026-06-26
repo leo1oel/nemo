@@ -270,6 +270,10 @@ Route by the nature of the task, not just the project name.
 A project may appear in several `projects:` clone lists, so choose the secondmate whose natural-language scope actually fits the work, such as triage versus feature development.
 If the resolved project is `local-only`, keep the work with the main firstmate even when a secondmate scope sounds relevant.
 If a secondmate's scope fits, steer that secondmate with one concise instruction via `bin/fm-send.sh fm-<id> '<work request>'` and let it run the normal lifecycle inside its own home (the bare `fm-<id>` target resolves through this home's `state/<id>.meta`).
+A secondmate is itself a firstmate, so a request reaches it in its own chat, which you never read - the return channel that wakes you is its status file.
+So `fm-send` to a bare `fm-<id>` whose meta is `kind=secondmate` automatically prepends a from-firstmate marker (`bin/fm-marker-lib.sh`); the secondmate recognizes it and returns its answer via its status file, or via a doc under its home plus a status pointer for a detailed response, never only in chat.
+Expect and read that response on the status/doc path the same way you read any other status signal; do not peek the secondmate's chat for the answer.
+A captain typing directly into the secondmate's window is unmarked and stays a conversational captain intervention, so the marker is applied only by `fm-send` to a `kind=secondmate` target.
 Do not spawn a direct crewmate for work that belongs to a secondmate scope unless the secondmate is blocked or the captain explicitly redirects it.
 If no secondmate scope fits, proceed in the main firstmate or create a new secondmate with the captain when that domain should become persistent; when you create one, hand its in-scope queued items off from the main backlog with `bin/fm-backlog-handoff.sh` (section 6).
 
@@ -305,6 +309,7 @@ Covered by section 8.
 Steer a crewmate only with short single lines via `bin/fm-send.sh`; anything long belongs in a file the crewmate can read.
 Steer a secondmate the same way.
 Its charter retargets escalation to the main firstmate's status file, so routine internal churn stays inside the secondmate home and only `done`, `blocked`, `needs-decision`, `failed`, or captain-relevant phase changes wake the main firstmate.
+Because `fm-send` to a `kind=secondmate` target marks the request as from-firstmate (intake above), the secondmate's answer comes back on that status/doc path too, not in its chat; read the response there as an ordinary status signal and do not peek its chat for it.
 
 ### Delivery modes and yolo
 
@@ -574,7 +579,7 @@ Then replace the `{TASK}` placeholder with a clear task description, acceptance 
 Adjust the other sections only when the task genuinely deviates from the standard ship-a-new-PR shape (e.g. fixing an existing external PR); the scaffold is the contract, not a suggestion.
 
 For secondmates use `bin/fm-brief.sh <id> --secondmate <project>...`.
-The scaffold writes a charter brief instead of a task brief: the persistent responsibility, available project clones, the idle-by-default contract, and escalation back to the main firstmate status file (it carries no worktree/branch setup because a secondmate's workspace is a whole firstmate home).
+The scaffold writes a charter brief instead of a task brief: the persistent responsibility, available project clones, the idle-by-default contract, the requests-from-main-firstmate contract (marked requests return via status or a doc pointer, while unmarked direct captain messages stay conversational), and escalation back to the main firstmate status file (it carries no worktree/branch setup because a secondmate's workspace is a whole firstmate home).
 Set `FM_SECONDMATE_CHARTER='<charter>'` to fill the charter text and `FM_SECONDMATE_SCOPE='<scope>'` when the routing scope differs; if you scaffold without `FM_SECONDMATE_CHARTER`, replace the `{TASK}` placeholder before seeding.
 The scaffold's definition of done encodes the idle-by-default contract (section 6): on startup the secondmate reconciles only its own in-flight work and then waits for routed tasks, never self-initiating a survey or audit; preserve that wording when filling the charter.
 `bin/fm-home-seed.sh` copies the charter into the secondmate home as `data/charter.md` and refuses a missing or placeholder charter; `bin/fm-spawn.sh --secondmate` launches it through the same launch-template path.
