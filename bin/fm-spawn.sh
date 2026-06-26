@@ -9,6 +9,9 @@
 #   see AGENTS.md section 7). --secondmate records kind=secondmate and launches in a
 #   provisioned firstmate home (a herdr worktree of $FM_ROOT seeded by fm-home-seed.sh);
 #   the default is kind=ship.
+#   Ship/scout spawns refuse to launch after the worktree is opened unless the resolved
+#   path is a real git worktree root distinct from the project's primary checkout
+#   (prevents the firstmate-on-itself worktree tangle; see fm-tangle-lib.sh).
 # Batch dispatch: pass one or more `id=repo` pairs instead of a single <id> <project>, e.g.
 #     fm-spawn.sh fix-a-k3=projects/foo add-b-q7=projects/bar [--scout]
 #   Each pair re-execs this script in single-task mode, so the single path stays the only
@@ -464,6 +467,32 @@ WT=$(printf '%s\n' "$OPENED" | sed -n 's/^worktree=//p')
 WS=$(printf '%s\n' "$OPENED" | sed -n 's/^workspace=//p')
 RP=$(printf '%s\n' "$OPENED" | sed -n 's/^rootpane=//p')
 [ -n "$WT" ] && [ -n "$WS" ] || { echo "error: 'fm-backend open' returned no worktree/workspace" >&2; exit 1; }
+
+# Isolation guard: refuse to launch unless WT is a genuine, ISOLATED worktree -
+# a real git worktree root, distinct from the project's primary checkout
+# (PROJ_ABS). Firstmate is a git repo of itself with linked worktrees, so a
+# worktree-open misfire could leave the pane in (or in a subdir of, or a symlink
+# to) the primary checkout; branching/committing there would tangle the primary
+# onto a feature branch (see fm-tangle-lib.sh). This proves the pane landed in a
+# true, separate worktree root before any branch/commit can happen.
+wt_real=
+if ! wt_real=$(cd "$WT" 2>/dev/null && pwd -P); then
+  wt_real=
+fi
+proj_real=
+if ! proj_real=$(cd "$PROJ_ABS" 2>/dev/null && pwd -P); then
+  proj_real=
+fi
+wt_top=$(git -C "$WT" rev-parse --show-toplevel 2>/dev/null || true)
+wt_top_real=
+if ! wt_top_real=$(cd "$wt_top" 2>/dev/null && pwd -P); then
+  wt_top_real=
+fi
+if [ -z "$wt_real" ] || [ -z "$wt_top_real" ] || [ "$wt_real" != "$wt_top_real" ] || [ "$wt_real" = "$proj_real" ]; then
+  echo "error: 'fm-backend open' did not yield an isolated worktree (resolved '$WT'; worktree root '${wt_top:-none}'; primary '$PROJ_ABS'); refusing to launch to avoid tangling the primary checkout." >&2
+  "$BACKEND" kill "" "$WS" >/dev/null 2>&1 || true
+  exit 1
+fi
 
 # Per-harness turn-end hook: a file that touches state/<id>.turn-ended when the
 # agent finishes a turn. Worktree-resident hooks are kept out of git's view so
