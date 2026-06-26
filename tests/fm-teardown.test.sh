@@ -65,6 +65,21 @@ exit 0
 SH
   chmod +x "$fakebin/herdr"
 
+  # Default GitHub mocks: no PR is associated with the branch, and viewing any PR
+  # fails. This keeps the landed-work check (pr_is_merged / pr_number_from_branch)
+  # hermetic - it never reaches the real gh/gh-axi - and represents the common
+  # "no GitHub PR" baseline. Tests override these to mock a merged PR.
+  cat > "$fakebin/gh-axi" <<'SH'
+#!/usr/bin/env bash
+exit 0
+SH
+  cat > "$fakebin/gh" <<'SH'
+#!/usr/bin/env bash
+echo "error: no pull request found" >&2
+exit 1
+SH
+  chmod +x "$fakebin/gh-axi" "$fakebin/gh"
+
   # Bare origin so the clone has an `origin` remote and origin/HEAD.
   git init -q --bare "$case_dir/origin.git"
   git -C "$case_dir/origin.git" symbolic-ref HEAD refs/heads/main
@@ -118,6 +133,75 @@ add_fork_with_pushed_branch() {
   # so refs/remotes/fork/fm-task-x1 is visible from the worktree (shared object db).
   git -C "$case_dir/wt" push -q fork fm/task-x1
   git -C "$case_dir/project" fetch -q fork
+}
+
+# Commit a real file change on the worktree's task branch (unlike wt_commit, which
+# makes an empty commit). A non-empty tree is what the content-in-default check
+# inspects. Args: case_dir file content [message]
+wt_commit_file() {
+  local case_dir=$1 file=$2 content=$3 msg=${4:-add $2}
+  printf '%s\n' "$content" > "$case_dir/wt/$file"
+  git -C "$case_dir/wt" add -- "$file"
+  git -C "$case_dir/wt" -c user.email=t@t -c user.name=t commit -q -m "$msg"
+}
+
+# Land <file>=<content> as a single commit on origin's default branch, simulating a
+# squash merge whose net change matches the task branch but whose commit differs.
+# After this, the branch's content is in origin/main even though the branch's own
+# commits are not reachable from it. Args: case_dir file content
+land_on_origin_main() {
+  local case_dir=$1 file=$2 content=$3 tmp
+  tmp="$case_dir/_land"
+  git clone -q "$case_dir/origin.git" "$tmp"
+  printf '%s\n' "$content" > "$tmp/$file"
+  git -C "$tmp" add -- "$file"
+  git -C "$tmp" -c user.email=t@t -c user.name=t commit -q -m "squash $file"
+  git -C "$tmp" push -q origin HEAD:main
+  rm -rf "$tmp"
+}
+
+# Override the GitHub mocks to report PR 7 as MERGED with the supplied head sha,
+# so pr_is_merged accepts the work when the worktree HEAD matches. Args: case_dir head
+add_gh_pr_merged_for_head() {
+  local case_dir=$1 head=$2
+  cat > "$case_dir/fakebin/gh-axi" <<'SH'
+#!/usr/bin/env bash
+case "${1:-} ${2:-}" in
+  "pr list") printf '  7,merged\n' ; exit 0 ;;
+esac
+exit 0
+SH
+  cat > "$case_dir/fakebin/gh" <<SH
+#!/usr/bin/env bash
+case "\${1:-} \${2:-}" in
+  "pr view")
+    case " \$* " in
+      *"state,headRefOid"*) printf '%s\t%s\n' 'MERGED' '$head' ; exit 0 ;;
+      *"headRefOid"*) printf '%s\n' '$head' ; exit 0 ;;
+    esac
+    ;;
+esac
+echo "error: pull request not found" >&2
+exit 1
+SH
+  chmod +x "$case_dir/fakebin/gh-axi" "$case_dir/fakebin/gh"
+}
+
+# Override the GitHub mocks so every call fails, simulating an API/network error.
+# Args: case_dir
+mock_gh_error() {
+  local case_dir=$1
+  cat > "$case_dir/fakebin/gh-axi" <<'SH'
+#!/usr/bin/env bash
+echo "error: gh-axi unavailable" >&2
+exit 1
+SH
+  cat > "$case_dir/fakebin/gh" <<'SH'
+#!/usr/bin/env bash
+echo "error: gh unavailable" >&2
+exit 1
+SH
+  chmod +x "$case_dir/fakebin/gh-axi" "$case_dir/fakebin/gh"
 }
 
 # Drop a fake compatible tasks-axi (reports 0.1.1) into the case fakebin so the
@@ -229,7 +313,9 @@ test_no_mistakes_truly_unpushed_refuses() {
   local case_dir rc
   case_dir=$(make_case nm-unpushed)
   write_meta "$case_dir" no-mistakes ship
-  wt_commit "$case_dir" "unpushed work"
+  # Real content that is not pushed, has no PR (default gh mock), and never landed
+  # on origin/main: genuinely unlanded work that must still refuse.
+  wt_commit_file "$case_dir" feature.txt hello "unpushed work"
 
   set +e
   run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
@@ -238,7 +324,66 @@ test_no_mistakes_truly_unpushed_refuses() {
 
   expect_code 1 "$rc" "nm-unpushed: teardown should refuse"
   grep -q REFUSED "$case_dir/stderr" || fail "nm-unpushed: no REFUSED line in stderr"
-  pass "no-mistakes worktree with truly unpushed work is refused (no regression)"
+  pass "no-mistakes worktree with genuinely unlanded work is refused (safety preserved)"
+}
+
+# #96: a squash-merged PR whose head branch was then deleted leaves the branch's
+# own commits on no remote, yet the work is fully landed. A merged PR matching the
+# current HEAD proves it; teardown must allow.
+test_squash_merged_branch_deleted_allows() {
+  local case_dir rc head
+  case_dir=$(make_case squash-merged)
+  write_meta "$case_dir" no-mistakes ship
+  wt_commit_file "$case_dir" feature.txt hello "shippable work"
+  head=$(git -C "$case_dir/wt" rev-parse HEAD)
+  add_gh_pr_merged_for_head "$case_dir" "$head"   # PR 7 MERGED, head = current HEAD
+
+  set +e
+  run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 0 "$rc" "squash-merged: teardown should allow merged-and-deleted-branch work"
+  ! grep -q REFUSED "$case_dir/stderr" || fail "squash-merged: teardown printed a REFUSED line"
+  pass "no-mistakes squash-merged PR with deleted branch is torn down (the fix)"
+}
+
+# #96 fallback: no PR is found, but the branch's content is already in the
+# up-to-date default branch (a squash landed it under a different commit).
+test_content_in_default_allows() {
+  local case_dir rc
+  case_dir=$(make_case content-in-default)
+  write_meta "$case_dir" no-mistakes ship
+  wt_commit_file "$case_dir" feature.txt hello "shippable work"
+  land_on_origin_main "$case_dir" feature.txt hello   # same net content on origin/main
+
+  set +e
+  run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 0 "$rc" "content-in-default: teardown should allow content already in main"
+  ! grep -q REFUSED "$case_dir/stderr" || fail "content-in-default: teardown printed a REFUSED line"
+  pass "no-mistakes work whose content is already in the default branch is torn down"
+}
+
+# #96 fail-safe: gh lookups error AND the content is not in the default branch -
+# inconclusive, so teardown must refuse rather than risk discarding unlanded work.
+test_gh_error_content_absent_refuses() {
+  local case_dir rc
+  case_dir=$(make_case gh-error)
+  write_meta "$case_dir" no-mistakes ship
+  wt_commit_file "$case_dir" feature.txt hello "unpushed work"
+  mock_gh_error "$case_dir"   # every gh/gh-axi call fails; content never landed
+
+  set +e
+  run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 1 "$rc" "gh-error: teardown should refuse when the landed check is inconclusive"
+  grep -q REFUSED "$case_dir/stderr" || fail "gh-error: no REFUSED line in stderr"
+  pass "no-mistakes work with a gh error and no content in default is refused (fail-safe)"
 }
 
 test_local_only_force_overrides_unpushed() {
@@ -295,5 +440,8 @@ test_local_only_truly_unpushed_refuses
 test_local_only_merged_to_local_main_allows
 test_no_mistakes_origin_remote_allows
 test_no_mistakes_truly_unpushed_refuses
+test_squash_merged_branch_deleted_allows
+test_content_in_default_allows
+test_gh_error_content_absent_refuses
 test_local_only_force_overrides_unpushed
 test_teardown_prompts_tasks_axi_done_when_compatible
