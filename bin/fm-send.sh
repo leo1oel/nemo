@@ -11,6 +11,12 @@
 # instead of silently leaving an unsubmitted instruction (incident afk-invx-i5).
 # The composer-detection primitive is shared with the away-mode daemon via
 # bin/fm-herdr-lib.sh. Tune with FM_SEND_RETRIES (default 3) / FM_SEND_SLEEP (0.4).
+# After a successful text submit fm-send pauses FM_SEND_SETTLE seconds (default 1,
+# 0 disables) before returning: a cleared composer only proves the text was
+# submitted, but the harness needs a beat to spin up the turn before its busy
+# footer appears, so an immediate peek would otherwise see the stale idle pane.
+# The pause is fm-send-only; the shared submit core (used by the away-mode daemon,
+# which only needs "submitted") does not pay it, and the --key path is unaffected.
 set -eu
 
 FM_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -53,4 +59,10 @@ else
     echo "error: text not submitted to $ARG (Enter swallowed; text left in composer)" >&2
     exit 1
   fi
+  # Submit landed (verdict was not pending). The cleared composer only proves the
+  # text was submitted; the harness still needs a beat to spin up the turn before
+  # its busy footer shows. Pause so an immediate peek catches the crewmate actually
+  # working instead of the stale idle pane. FM_SEND_SETTLE=0 disables it. Scoped to
+  # this text path only, never the shared submit core the daemon uses.
+  [ "${FM_SEND_SETTLE:-1}" = 0 ] || sleep "${FM_SEND_SETTLE:-1}"
 fi

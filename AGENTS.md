@@ -318,7 +318,7 @@ Batch dispatch does not support `--secondmate`; spawn each secondmate explicitly
 
 The script owns the verified Claude launch template, resolves the project's delivery mode (`fm-project-mode.sh`) for ship/scout tasks, and records `harness=`, `kind=`, `mode=`, and `yolo=` in the task's meta; a non-flag third argument containing whitespace is treated as a raw launch command (escape hatch).
 
-For ship and scout tasks, the script creates a fresh herdr worktree workspace, launches the crewmate as a herdr agent pane in it, installs the turn-end hook, and records `state/<id>.meta`.
+For ship and scout tasks, the script creates a fresh herdr worktree workspace, asserts the opened worktree is a genuine isolated worktree distinct from the project's primary checkout (aborting the spawn otherwise, to prevent the worktree tangle of section 8), launches the crewmate as a herdr agent pane in it, installs the turn-end hook, and records `state/<id>.meta`.
 Worktrees start at detached HEAD on a clean default branch; ship briefs tell the crewmate to create its branch, while scout briefs keep the worktree scratch.
 For `kind=secondmate`, the same script launches in the registered or explicit firstmate home instead of creating a per-task worktree, reuses the home's herdr workspace (opening one for a plain-directory home), uses the home's `data/charter.md` as the launch prompt, installs no turn-end hook (the secondmate runs its own watcher), and records `home=`, `home_workspace=`, and `projects=` alongside `mode=secondmate`, `yolo=off`.
 After spawning, peek the pane to confirm the crewmate is processing the brief (and handle any trust dialog per section 4).
@@ -461,6 +461,13 @@ So the next time you touch the fleet with queued wakes or no watcher alive, the 
 The grace window keeps normal handling (watcher briefly down between a wake and its re-arm) silent.
 If a guard warning says queued wakes are pending, drain them before doing anything else.
 If a guard warning says watcher liveness is stale, arm `bin/fm-watch-arm.sh` after draining any queued wakes.
+
+`fm-guard.sh` carries a second, independent alarm in the same bordered ●-marked style: the **worktree-tangle** guard.
+Firstmate is a git repo of itself - the primary checkout (the repo root, `FM_ROOT`) and every crewmate worktree and secondmate home are linked herdr worktrees of one repo - and the primary must stay on its default branch.
+If a crewmate sent to work firstmate-on-itself branches or commits in the primary instead of its own isolated worktree, the primary is stranded on a feature branch (the failure this guards against); the guard names the offending branch and prints the non-destructive restore (`git -C <root> checkout <default>`), so the tangle surfaces on the very next fleet action.
+The check is scoped precisely to the primary: detached HEAD (the legitimate resting state of crewmate worktrees and secondmate homes on the default branch) and the default branch itself never alarm; only a named non-default branch checked out in the primary does.
+That restore is the one sanctioned firstmate-initiated git write to the primary - a non-destructive branch switch that strands nothing, since the work stays safe on its own branch ref.
+Two further guards prevent the tangle upstream: `fm-spawn` refuses to launch unless the opened worktree is a genuine isolated worktree distinct from the primary checkout, and every ship brief's first instruction has the crewmate verify it is in its own worktree before branching (section 11).
 Watcher liveness is not enough if you are foreground-blocked.
 Whenever one or more tasks are in flight, do not run long foreground-blocking operations in your own session.
 This is about firstmate's own session: it includes a no-mistakes pipeline firstmate runs for this repo, long builds, and any other multi-minute command.
@@ -584,6 +591,7 @@ Secondmates inherit this automatically: each secondmate home carries the same `A
 ## 11. Crewmate briefs
 
 Scaffold with `bin/fm-brief.sh <id> <repo-name>` - it writes `data/<id>/brief.md` with the standard contract (branch setup, status-reporting protocol, push/merge rules, definition of done) and all paths filled in.
+The ship-brief Setup opens with a worktree-isolation assertion ahead of the branch step: the crewmate confirms it is in its own herdr worktree, not the primary checkout, and stops with `blocked: launched in primary checkout, not an isolated worktree` if not - the upstream half of the worktree-tangle guard (section 8).
 For a ship task the definition of done is shaped by the project's delivery mode (section 6): `no-mistakes` ends in the no-mistakes validation pipeline, `direct-PR` has the crewmate push and open the PR itself, `local-only` has it stop at "ready in branch" for firstmate to review and merge locally.
 The scaffold reads the mode via `fm-project-mode.sh`, so you do not pass it.
 Ship briefs also include the project-memory contract: run `bin/fm-ensure-agents-md.sh` when the project already has agent-memory files or when the task produced durable project-intrinsic knowledge, then record proportionate learnings in `AGENTS.md`.
