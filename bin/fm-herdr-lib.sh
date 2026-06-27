@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 # fm-herdr-lib.sh — shared herdr pane primitives for firstmate.
 #
-# ONE source of truth for: composer-empty (pending-input) detection and a
-# verify-and-retry-Enter submit. Sourced by both the away-mode daemon
-# (bin/fm-supervise-daemon.sh) and bin/fm-send.sh so the composer/submit logic
-# cannot drift between the two. herdr-only — no tmux, no treehouse.
+# ONE source of truth for: composer-empty (pending-input) detection, a
+# verify-and-retry-Enter submit, and pane existence + agent_status busy
+# detection. Sourced by the away-mode daemon (bin/fm-supervise-daemon.sh),
+# bin/fm-send.sh, and bin/fm-crew-state.sh so the composer/submit/busy logic
+# cannot drift between them. herdr-only — no tmux, no treehouse.
 #
 # Why this exists (incident afk-invx-i5): the daemon's old composer check only
 # recognized a BARE prompt glyph ("❯ ") at the start of a line as the empty
@@ -218,4 +219,43 @@ fm_herdr_submit_enter_core() {  # <handle> <retries> <enter-sleep> <enter-fn>
     i=$((i + 1))
     [ "$i" -lt "$retries" ] || { printf 'pending'; return 0; }
   done
+}
+
+# --- pane existence + agent_status busy detection ---------------------------
+# Single source of truth for "does this pane exist" and "is its agent working",
+# shared by the away-mode daemon and the crew-state helper. All take a resolved
+# handle (a herdr pane id); window-name → handle resolution stays with the caller.
+
+# fm_herdr_pane_exists: 0 if the herdr pane currently exists. Replaces the tmux
+# `display-message -p '#{pane_id}'` existence probe.
+fm_herdr_pane_exists() {  # <handle>
+  [ -n "${1:-}" ] || return 1
+  herdr pane get "$1" >/dev/null 2>&1
+}
+
+# fm_herdr_pane_agent_status: herdr agent_status for a pane (set by the claude
+# integration). Empty if the integration is absent or the pane is gone. Parsed
+# with grep so no python dependency is introduced.
+fm_herdr_pane_agent_status() {  # <handle>
+  herdr pane get "$1" 2>/dev/null | grep -o '"agent_status":"[^"]*"' | head -1 | cut -d'"' -f4
+}
+
+# fm_herdr_pane_is_busy: 0 if the pane's agent is currently working. PRIMARY
+# signal is herdr's agent_status, which covers BOTH the thinking spinner and
+# tool-run phases — the busy footer alone misses thinking (Claude shows
+# "… (thinking with <effort> effort)", not "esc to interrupt"). Falls back to the
+# footer regex only when agent_status is unavailable (integration not installed).
+# FM_BUSY_REGEX overrides the fallback set.
+fm_herdr_pane_is_busy() {  # <handle>
+  local h=$1 st tail40
+  [ -n "$h" ] || return 1
+  st=$(fm_herdr_pane_agent_status "$h")
+  case "$st" in
+    working) return 0 ;;
+    idle|blocked|done) return 1 ;;
+  esac
+  # agent_status unknown/empty -> footer-regex fallback.
+  tail40=$(herdr pane read "$h" --source visible --lines 40 2>/dev/null) || return 1
+  printf '%s' "$tail40" | grep -v '^[[:space:]]*$' | tail -6 \
+    | grep -qiE "${FM_BUSY_REGEX:-$FM_HERDR_BUSY_REGEX_DEFAULT}"
 }
