@@ -27,6 +27,12 @@ trap cleanup EXIT
 
 TMP_ROOT=$(mktemp -d "${TMPDIR:-/tmp}/fm-wake-tests.XXXXXX")
 
+# fm-wake-drain now calls fm-guard.sh (the watcher-liveness assertion, #101), whose
+# worktree-tangle check reads FM_ROOT. Pin FM_ROOT to this non-git temp root so the
+# ambient (possibly feature-branch) checkout never leaks a TANGLE banner into drain
+# output. The guard-specific tests below override FM_ROOT_OVERRIDE per-invocation.
+export FM_ROOT_OVERRIDE="$TMP_ROOT"
+
 make_case() {
   local name=$1 dir fakebin
   dir="$TMP_ROOT/$name"
@@ -360,6 +366,27 @@ test_guard_quiet_when_watcher_fresh() {
   FM_ROOT_OVERRIDE="$dir" FM_STATE_OVERRIDE="$state" FM_GUARD_GRACE=300 "$ROOT/bin/fm-guard.sh" 2> "$err" >/dev/null || fail "guard failed"
   [ ! -s "$err" ] || fail "guard warned during the grace window with a fresh watcher: $(cat "$err")"
   pass "guard stays silent when a fresh watcher is alive and no wakes are queued"
+}
+
+# #101: fm-wake-drain asserts watcher liveness after draining, so a lapsed chain
+# also surfaces on a plain drain-and-handle turn. (FM_ROOT_OVERRIDE is pinned at the
+# top of this file, so the drain's guard tangle-check stays inert here.)
+test_drain_asserts_watcher_liveness_on_lapse() {
+  local dir state err
+  dir=$(make_case drain-liveness)
+  state="$dir/state"
+  err="$dir/drain.err"
+  # Work in flight + no fresh beacon => a lapse the drain's guard must warn about.
+  printf 'project=x\n' > "$state/task.meta"
+  FM_STATE_OVERRIDE="$state" FM_GUARD_GRACE=1 "$DRAIN" >/dev/null 2> "$err" || fail "drain failed on lapse case"
+  grep -F 'WATCHER DOWN' "$err" >/dev/null || fail "drain did not assert watcher liveness on a lapse: $(cat "$err")"
+
+  # Fresh beacon => no lapse: the drain stays silent right after a fire.
+  : > "$err"
+  touch "$state/.last-watcher-beat"
+  FM_STATE_OVERRIDE="$state" FM_GUARD_GRACE=300 "$DRAIN" >/dev/null 2> "$err" || fail "drain failed on fresh case"
+  [ ! -s "$err" ] || fail "drain warned right after a fire (fresh beacon): $(cat "$err")"
+  pass "fm-wake-drain asserts watcher liveness after draining (warns on lapse, silent after fire)"
 }
 
 dead_pid() {
@@ -895,3 +922,4 @@ test_arm_fails_loud_when_no_fresh_watcher_confirmable
 test_arm_never_healthy_off_dead_pid_self_heals
 test_guard_banner_leads_when_no_fresh_watcher
 test_guard_quiet_when_watcher_fresh
+test_drain_asserts_watcher_liveness_on_lapse

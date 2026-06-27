@@ -34,6 +34,7 @@ Detected wakes are also written to a durable local queue (`state/.wake-queue`) b
 Routine watcher polling, re-arm no-ops, elapsed waiting time, and unchanged heartbeat reviews stay silent; an idle crew costs you nothing.
 Routine re-arms go through `bin/fm-watch-arm.sh`, which forks the watcher as a tracked child, verifies it is genuinely alive with a fresh liveness beacon, and prints exactly one honest status line (`started` / `healthy` / `FAILED`, the last exiting non-zero) - never a false `already running` off a dying process; its `--restart` mode signals only the watcher recorded in the current home's `state/.watch.lock`, so restarting one home cannot kill sibling secondmate watchers.
 A pull-based guard (`bin/fm-guard.sh`) warns through supervision tool output if tasks are in flight and that watcher stops running or queued wakes are waiting to be drained, leading with a prominent bordered banner for the no-watcher case so it cannot be skimmed past.
+`bin/fm-wake-drain.sh` runs that same guard after it drains, so a lapsed supervision chain also surfaces on a plain drain-and-handle turn that runs no other supervision script; the grace beacon keeps it silent right after a normal fire.
 The same guard carries a second bordered alarm: the worktree-tangle guard, which fires when the primary firstmate checkout is stranded on a feature branch (a crewmate working firstmate-on-itself that branched in the primary instead of its own worktree).
 
 ## Away-mode (`/afk`)

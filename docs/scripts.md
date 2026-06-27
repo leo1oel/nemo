@@ -21,7 +21,7 @@ Read each script's header comment before first use.
 | `fm-review-diff.sh`      | Review a crewmate branch against the authoritative base, with optional `--stat` output                              |
 | `fm-watch-arm.sh`        | Verified per-home watcher re-arm; reports `started`, `healthy`, or `FAILED`; `--restart` relaunches only this home's watcher |
 | `fm-watch.sh`            | Singleton-safe one-shot watcher; blocks until supervision work is due, queues it durably, then exits with one reason line |
-| `fm-wake-drain.sh`       | Atomically drain queued watcher wakes before handling supervision work                                              |
+| `fm-wake-drain.sh`       | Atomically drain queued watcher wakes before handling supervision work, then assert watcher liveness (reuses fm-guard's beacon banner) so a lapsed chain surfaces on a plain drain turn |
 | `fm-supervise-daemon.sh` | Optional away-mode sub-supervisor: wraps the watcher, self-handles routine wakes, escalates only captain-relevant events as one batched herdr-pane digest; presence-gated by `/afk` |
 | `fm-backend.sh`          | herdr backend abstraction: open/launch/read/send/kill panes and worktrees                                          |
 | `fm-send.sh`             | Send one literal line (or `--key Escape`) to a crewmate pane; settles after a text submit; marks from-firstmate requests to a `kind=secondmate` target so the reply routes via the status path |
