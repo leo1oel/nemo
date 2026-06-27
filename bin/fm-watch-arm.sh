@@ -4,9 +4,10 @@
 # The watcher (bin/fm-watch.sh) is one-shot: it blocks until a wake is due, prints
 # one reason line, and exits. Reliability depends on re-arming through a mechanism
 # that SURVIVES the call and NOTIFIES on exit, so firstmate must run this script as
-# the harness's own tracked background task (e.g. run_in_background). NEVER fire it
-# and forget with a shell `&` inside another call: that backgrounded child is
-# reaped when the call returns, leaving NO watcher running and - worse - a false
+# the harness's own tracked background task (e.g. run_in_background). Run it as its
+# own standalone background task, never bundled onto the tail of another command.
+# NEVER fire it and forget with a shell `&` inside another call: that backgrounded
+# child is reaped when the call returns, leaving NO watcher running and a false
 # "already running" off the dying process. That exact mistake silently took
 # supervision down for ~30 minutes.
 #
@@ -22,7 +23,8 @@
 # stale-beacon or dead-pid holder either self-heals (the fresh child steals the
 # dead lock per the singleton self-eviction/steal path and is confirmed) or this
 # returns the FAILED line. On started/healthy it exits zero; on FAILED it exits
-# non-zero so the failure is loud and a caller can react.
+# non-zero so the failure is loud and a caller can react. A healthy line means a
+# live cycle already exists; do not churn extra no-op arms until that cycle fires.
 #
 # --restart: stop ONLY this FM_HOME's watcher (the pid recorded in THIS home's
 # state/.watch.lock) and start a fresh one. It resolves and signals exactly that
