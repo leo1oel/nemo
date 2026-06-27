@@ -114,13 +114,10 @@ STALE_ESCALATE_SECS_DEFAULT=240
 ESCALATE_BATCH_SECS_DEFAULT=90
 HEARTBEAT_SCAN_SECS_DEFAULT=300
 HOUSEKEEPING_TICK_DEFAULT=15
-# Busy-footer FALLBACK regex, used only when herdr agent_status is unavailable
-# (integration not installed). Covers the tool-run footer ("esc to interrupt")
-# AND the thinking spinner line ("… (thinking with <effort> effort)"), which the
-# bare "esc to interrupt" misses. Primary busy detection is agent_status.
-# (Mirrors FM_HERDR_BUSY_REGEX_DEFAULT in fm-herdr-lib.sh, which backs the
-# composer detector's footer-on-the-prompt-line check.)
-BUSY_REGEX_DEFAULT='esc to interrupt|thinking with'
+# Pane existence + agent_status busy detection (and its busy-footer fallback) now
+# live in bin/fm-herdr-lib.sh (fm_herdr_pane_exists / fm_herdr_pane_is_busy),
+# shared with bin/fm-crew-state.sh so the busy signal cannot drift. FM_BUSY_REGEX
+# still overrides the footer-fallback set there.
 CAPTAIN_RE_DEFAULT='done:|needs-decision:|blocked:|failed:|PR ready|checks green|ready in branch|merged'
 # Empty-composer / pending-input detection now lives in bin/fm-herdr-lib.sh
 # (fm_herdr_composer_state); it strips Claude's box borders before deciding, so
@@ -421,38 +418,19 @@ _handle_for() {  # <window-or-pane> <state>
   esac
 }
 
-# 0 if the herdr pane currently exists (get returns non-error). Replaces the tmux
-# `display-message -p '#{pane_id}'` existence probe.
+# Pane existence: thin wrapper over the shared fm-herdr-lib.sh primitive.
 pane_exists() {  # <pane-id>
-  [ -n "${1:-}" ] || return 1
-  herdr pane get "$1" >/dev/null 2>&1
+  fm_herdr_pane_exists "${1:-}"
 }
 
-# herdr agent_status for a pane (set by the claude integration). Empty if the
-# integration is absent or the pane is gone. Parsed with grep so the daemon keeps
-# no python dependency.
-_pane_status() {  # <pane-id>
-  herdr pane get "$1" 2>/dev/null | grep -o '"agent_status":"[^"]*"' | head -1 | cut -d'"' -f4
-}
-
-# 0 if the pane is currently busy (agent working). PRIMARY signal is herdr's
-# agent_status, which covers BOTH the thinking spinner and tool-run phases — the
-# busy footer alone misses thinking (Claude shows "… (thinking with <effort>
-# effort)", not "esc to interrupt"). Falls back to the footer regex only when
-# agent_status is unavailable (integration not installed).
+# 0 if the pane is currently busy (agent working). Resolves the wake-reason
+# window name "fm-<id>" to its handle, then delegates to the shared agent_status
+# busy detector in fm-herdr-lib.sh (primary signal, with a footer-regex fallback).
 pane_is_busy() {  # <window-or-pane>
-  local w=$1 h st tail40
-  h=$(_handle_for "$w" "$(_state_root)")
+  local h
+  h=$(_handle_for "$1" "$(_state_root)")
   [ -n "$h" ] || return 1
-  st=$(_pane_status "$h")
-  case "$st" in
-    working) return 0 ;;
-    idle|blocked|done) return 1 ;;
-  esac
-  # agent_status unknown/empty -> footer-regex fallback.
-  tail40=$(herdr pane read "$h" --source visible --lines 40 2>/dev/null) || return 1
-  printf '%s' "$tail40" | grep -v '^[[:space:]]*$' | tail -6 \
-    | grep -qiE "${FM_BUSY_REGEX:-$BUSY_REGEX_DEFAULT}"
+  fm_herdr_pane_is_busy "$h"
 }
 
 # pane_input_pending: 0 (pending) if Claude's composer holds unsubmitted text, 1

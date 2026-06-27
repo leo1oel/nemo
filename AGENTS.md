@@ -78,7 +78,7 @@ data/                personal fleet records; LOCAL, gitignored as a whole
   <id>/report.md     scout task deliverable, written by the crewmate; survives teardown
 projects/            cloned repos; gitignored; READ-ONLY for you
 state/               volatile runtime signals; gitignored
-  <id>.status        appended by crewmates: "<state>: <note>" lines
+  <id>.status        appended by crewmates: "<state>: <note>" wake-event lines, not current-state truth
   <id>.turn-ended    touched by turn-end hooks
   <id>.meta          written by fm-spawn: handle=, workspace=, worktree=, project=, harness=, kind=, mode=, yolo= (fm-pr-check appends pr= and verified pr_head= when available); kind=secondmate also records home= and home_workspace= and projects=
   <id>.check.sh      optional slow poll you write per task (e.g. merged-PR check)
@@ -141,6 +141,7 @@ Reconcile reality with your records before doing anything else:
 2. Drain queued wakes with `bin/fm-wake-drain.sh` and keep the printed records as the first work queue for this recovery turn.
 3. Enumerate live direct reports from `state/*.meta` (each records `handle=`); under herdr you can cross-check with `bin/fm-backend.sh list`.
 4. Read `data/backlog.md`, `data/secondmates.md` if present, every `state/*.meta`, and every `state/*.status`.
+   Treat status files as wake-event history; when you need a live current-state read for a recorded direct report, use `bin/fm-crew-state.sh <id>` instead of inferring from the last status line.
 5. For a crewmate terminal with no meta (orphan): peek it, figure out what it is, ask the captain if unclear.
 6. For meta whose direct report is gone (dead, e.g. its herdr pane is missing): reconcile by kind.
    For an ordinary crewmate, salvage or report.
@@ -339,11 +340,18 @@ The no-mistakes pipeline owns every validation fix on the crewmate's branch in i
 When it reports `needs-decision` (ask-user findings), relay the findings to the captain unless `yolo=on` permits routine approval on your judgment, then send the decision back as a short instruction (the crewmate responds via `no-mistakes axi respond`).
 Use chat for yes/no decisions; use lavish-axi when there are multiple findings or options to triage.
 
-Judge a validating crewmate by the run's step status, never by whether its shell is still running; read it cheaply with `no-mistakes axi status`.
+Judge a validating crewmate by the run's step status, never by whether its shell is still running.
+Read its current state with `bin/fm-crew-state.sh <id>`: a deterministic, token-tight one-line read that takes the matching no-mistakes run-step as the source of truth and reconciles it against the crewmate's `state/<id>.status` log.
+Because the run-step is authoritative before pane liveness, a crewmate whose pane closed after or during validation can still report `done` or `working` from its run; a missing pane becomes `unknown` only when no matching run exists.
+That log is an append-only wake-*event* log, not a current-state field, and it goes stale the moment a resolved gate lets the run resume: after you answer a `needs-decision`/`blocked` and the crewmate silently resumes (responds to the gate, the pipeline fixes, it re-validates), the log's last line still reads `needs-decision`/`blocked` while the run-step has moved on.
+So never infer current state from a `tail` of that log; `bin/fm-crew-state.sh` reports the live run-step state and explicitly flags the stale log line superseded, where a raw `tail` would mislead you into re-escalating settled work.
+The fields below name the run-step states and outcomes it reads from `no-mistakes axi status`; run that command directly when you want the full gate findings.
 
 - `running`/`fixing`/`ci` - the pipeline is working (a fix round, a test, or CI monitoring); these run for many minutes and quiet is normal, so leave it alone.
 - `awaiting_approval`/`fix_review` - the run is parked waiting on the agent, surfaced as a top-level `awaiting_agent: parked <duration>` line right after `status:` in `axi status`.
   The crewmate owes a `respond`; if it is idle-waiting for the run to advance on its own, steer it to drive the gate, because a parked gate never self-resolves.
+- `outcome: passed` or `checks-passed` - the helper reports `done`; `passed` means the PR is already merged or closed, while `checks-passed` means it is ready for PR review.
+- `outcome: failed` or `cancelled` - the helper reports `failed`; inspect the run details and recover or report failure with evidence.
 - Red flag - self-fix duplication: a validating crewmate making fresh hand-commits, aborting the run, or re-running it mid-validation is re-doing work the pipeline already owns.
   Steer it back to respond-only: the pipeline applies every fix on the branch from `axi respond`, including the fix for a real bug the review found in the crewmate's own code, and hand-fixing forces a full re-validation.
 
@@ -431,15 +439,17 @@ bin/fm-watch-arm.sh        # safe verified re-arm; run as harness-tracked backgr
 bin/fm-watch-arm.sh --restart  # home-scoped forced restart; never a broad pkill
 bin/fm-watch.sh            # the watcher itself; exits with: signal|stale|check|heartbeat
 bin/fm-wake-drain.sh       # drain queued wake records at turn start; asserts guard after draining
+bin/fm-crew-state.sh <id>  # one-line current-state read; reconciles matching run-step, pane, and status log
 ```
 
 On wake, in order of cheapness:
 
 1. Read the reason line and drain queued wake records with `bin/fm-wake-drain.sh`.
 2. `signal:` read the listed status files first; a wake lists every signal that landed within the coalescing grace window (e.g. a status write plus the same turn's turn-end marker), and each is ~30 tokens and usually sufficient.
+   A status line is the wake *event*, not the crewmate's current state; when you need the live state - especially to confirm a `needs-decision`/`blocked` is still real and not already resolved-and-resumed - read it with `bin/fm-crew-state.sh <id>`, which reconciles the authoritative run-step over the possibly-stale log line, and never `tail` the status log as the current-state source.
 3. `stale:` the crewmate stopped without reporting; peek it (`bin/fm-peek.sh fm-<id>`) to diagnose.
 4. `check:` a per-task poll fired (usually a merge); act on it.
-5. `heartbeat:` review the whole fleet: skim each crewmate's status file, peek panes that look off, check PR-ready tasks for merge, reconcile data/backlog.md, then re-arm the watcher.
+5. `heartbeat:` review the whole fleet: read each crewmate's current state with `bin/fm-crew-state.sh <id>` (the cheap first read - it reconciles the authoritative run-step over a possibly-stale status-log line, so a crewmate whose gate you already resolved no longer reads as still parked), peek panes that look off, check PR-ready tasks for merge, reconcile data/backlog.md, then re-arm the watcher.
    A heartbeat with no captain-relevant change is internal; do not report that the fleet is unchanged.
 
 Heartbeats back off exponentially while they are the only wakes firing (600s doubling to a 2h cap - an idle fleet stops burning turns); any signal, stale, or check wake resets the cadence to the base interval.
@@ -475,7 +485,7 @@ This is about firstmate's own session: it includes a no-mistakes pipeline firstm
 Background that work so watcher wakes can interleave with it and the supervision loop stays responsive.
 A crewmate driving its own `no-mistakes` validation does the opposite: it drives that gate loop synchronously and processes every return, never idle-waiting for its own validation run to advance on its own.
 
-Token discipline: status files before panes; default peeks to 40 lines; never stream a pane repeatedly through yourself; batch what you tell the captain.
+Token discipline: for a crewmate's current state prefer `bin/fm-crew-state.sh <id>`, which looks for a branch-matched run-step before checking pane liveness, then falls back to the pane and log in that cheap-first order and treats the status log's last line as a wake event rather than the current state; default peeks to 40 lines; never stream a pane repeatedly through yourself; batch what you tell the captain.
 The context-% shown in a peek is not actionable as crew health; ignore it and intervene only on real signals (`signal`, `stale`, `needs-decision`, `blocked`), looping or confusion in the pane, or a question the brief already answers.
 Silence is the correct state while a healthy background watcher is waiting.
 
