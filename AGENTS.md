@@ -27,6 +27,7 @@ Hard rules, in priority order:
    You read projects to understand them; crewmates change them.
    Three sanctioned exceptions: tool-driven project initialization (section 6), the fleet sync firstmate runs via `bin/fm-fleet-sync.sh` (clean fast-forwarding a clone's local default branch to match `origin`, plus pruning local branches whose upstream is gone), and the approved local merge for a `local-only` project, which firstmate performs with `bin/fm-merge-local.sh` once the captain approves (section 7).
    The fleet sync exception advances only the checked-out local default branch (never forcing it, creating merge commits, or stashing) and otherwise deletes only local branches whose upstream tracking branch is gone and that have no worktree; it never removes or changes a task worktree, so it cannot discard unlanded work.
+   As part of that exception it may also self-heal the one unambiguously safe drift: a clone sitting on a clean detached HEAD that holds no unique commits is re-attached to its default branch (a non-destructive checkout to an already-published ancestor commit, stranding nothing) before the same fast-forward runs; any unsafe drift - dirty, a named branch, detached with unique commits, or diverged - it leaves untouched and reports loudly as `STUCK:`.
    Project `AGENTS.md` maintenance is not another exception: firstmate records not-yet-committed project knowledge in `data/` and has crewmates update project `AGENTS.md` through normal worktree delivery (section 6).
 2. **Never merge a PR without the captain's explicit word.**
    The one standing, captain-authorized relaxation is a project's `yolo` flag (section 7): with `yolo` on, firstmate makes routine approval decisions itself, but anything destructive, irreversible, or security-sensitive still escalates to the captain.
@@ -68,7 +69,7 @@ docs/                concise reference tree (architecture, configuration, script
 .github/workflows/   shared CI and PR enforcement, committed
 .agents/skills/      shared skills, committed
 .claude/skills       symlink to .agents/skills for claude compatibility
-bin/                 helper scripts, committed, including fm-fleet-sync.sh for clean default-branch refreshes and gone-branch pruning; read each script's header before first use
+bin/                 helper scripts, committed, including fm-fleet-sync.sh for safe clone refreshes (fast-forward, clean detached re-attach, STUCK reporting on unsafe drift) and gone-branch pruning; read each script's header before first use
 data/                personal fleet records; LOCAL, gitignored as a whole
   backlog.md         task queue, dependencies, history
   captain.md         captain's curated personal preferences and working style - approval posture, communication style, release habits; LOCAL, gitignored; compact rewrite-and-prune counterpart to shared AGENTS.md; canonical harness-portable home, even if harness memory mirrors it as a recall cache
@@ -375,7 +376,8 @@ The script refuses if the worktree holds uncommitted changes or committed work t
 This recognizes the common squash-merge-then-delete-branch flow, where the branch's own commits live nowhere on a remote yet the change is fully in `main`; a merged-and-deleted branch now tears down cleanly instead of false-refusing.
 Genuinely unlanded work (no matching merged PR head and content not in the default branch) and dirty worktrees still refuse, and a gh lookup error falls back to the content check rather than silently allowing.
 Known benign case: after an external-PR task, a squash merge leaves the branch commits reachable only on the contributor's fork; add the fork as a remote and fetch (`git remote add fork <fork url> && git fetch fork`), then retry - never reach for `--force`.
-After a successful PR-based teardown, it also runs `bin/fm-fleet-sync.sh` for that project, best-effort, so the clone's local default catches up to the merge and the just-merged branch, now gone on the remote and free of its worktree, is pruned immediately.
+After a successful PR-based teardown, it also runs `bin/fm-fleet-sync.sh` for that project, best-effort, so safe clone states catch up to the merge, clean detached ancestor drift self-heals, and the just-merged branch, now gone on the remote and free of its worktree, is pruned immediately.
+Unsafe drift is reported as `STUCK:` and left untouched.
 Then update the backlog using the teardown reminder: run `tasks-axi done` when the compatible tool is available (it also auto-prunes and archives Done), otherwise move the task to Done in `data/backlog.md` manually with the full `https://...` PR URL or local merge note and date and keep Done to the 10 most recent.
 Then re-evaluate the queue, and dispatch anything that was blocked on this task or is now time/date-due.
 
