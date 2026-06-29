@@ -55,13 +55,16 @@ FM_SIGNAL_GRACE=30      # seconds to coalesce nearby status and turn-end signals
 FM_SEND_SETTLE=1        # seconds fm-send pauses after a successful text submit (0 disables)
 FM_FLEET_PRUNE=1        # set to 0 to skip pruning local branches whose upstream is gone
 FM_BUSY_REGEX='esc to interrupt'   # Claude's busy-pane signature
+FM_CAPTAIN_RE='done:|needs-decision:|blocked:|failed:|PR ready|checks green|ready in branch|merged'   # status regex that makes watcher and daemon signal/stale/scan output captain-relevant
+FM_STALE_ESCALATE_SECS=240   # idle seconds before a provably-working non-terminal stale pane escalates; not-provably-working stale wakes surface immediately
+FM_WATCH_TRIAGE_LOG_MAX_BYTES=262144   # size cap for the watcher's absorbed-wake debug log
+FM_CREW_STATE_BIN=bin/fm-crew-state.sh   # test override for the current-state reader used by provably-working watcher triage
 ```
 
 Sub-supervisor (`fm-supervise-daemon.sh`, away-mode) knobs:
 
 ```sh
 FM_SUPERVISOR_TARGET    # captain's herdr pane id (else auto-discovered from HERDR_PANE_ID)
-FM_STALE_ESCALATE_SECS=240   # idle seconds before a stale pane escalates as a possible wedge
 FM_ESCALATE_BATCH_SECS=90    # buffer window for batched escalation digests; 0 = flush immediately
 FM_MAX_DEFER_SECS=300        # force one flush if a digest stays undelivered this long; 0 disables
 FM_HEARTBEAT_SCAN_SECS=300   # cadence of the catch-all status scan

@@ -36,7 +36,13 @@ batched digest rather than per-wake injections.
    injects digests back into. Override with `FM_SUPERVISOR_TARGET=<pane-id>`.
 
 3. **Do not separately arm `fm-watch.sh`.** The daemon manages the watcher as
-   its child; the singleton lock no-ops a stray arm harmlessly.
+   its child; the singleton lock no-ops a stray arm harmlessly. While `state/.afk`
+   exists the watcher reverts to one-shot and surfaces every wake for the daemon to
+   classify, so the daemon and the always-on watcher never run their triage at the
+   same time. Both apply one identical policy: the captain-relevant verb set and the
+   signal/stale/heartbeat predicates live in the shared `bin/fm-classify-lib.sh` the
+   always-on watcher uses for its own triage when afk is off, so the two modes cannot
+   drift apart.
 
 4. **Acknowledge** to the captain that away-mode is active: the daemon will
    self-handle routine wakes, escalate only captain-relevant events, and the
