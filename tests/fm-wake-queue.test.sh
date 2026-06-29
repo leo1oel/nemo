@@ -176,6 +176,43 @@ test_stale_enqueue_before_suppressor() {
   pass "stale wake is queued before suppressor state is advanced"
 }
 
+# Queue-safety of the always-on absorb path (#107/#126): a non-terminal stale
+# whose crew is PROVABLY WORKING (an actively-running pipeline legitimately on a
+# static pane) must be absorbed in bash - never written to the durable queue and
+# never ending the watcher run. The complement of test_stale_enqueue_before_suppressor,
+# whose worktree-less meta makes the crew not-provably-working (immediate surface).
+test_stale_provably_working_absorbed_not_queued() {
+  local dir state fakebin out capture_file id key pane_hash pid
+  dir=$(make_case stale-absorb)
+  state="$dir/state"; fakebin="$dir/fakebin"; out="$dir/watch.out"; capture_file="$dir/pane.txt"
+  # Stub the provably-working verdict: the crew's no-mistakes run is actively running.
+  cat > "$fakebin/fm-crew-state.sh" <<'SH'
+#!/usr/bin/env bash
+printf 'state: working · source: run-step · ci running\n'
+SH
+  chmod +x "$fakebin/fm-crew-state.sh"
+  id="absorb"
+  printf 'idle building output' > "$capture_file"
+  # No captain-relevant status file -> non-terminal stale; the signal path stays inert.
+  printf 'handle=p1\nkind=ship\n' > "$state/$id.meta"
+  key="fm-$id"
+  pane_hash=$(hash_text "idle building output")
+  printf '%s' "$pane_hash" > "$state/.hash-$key"
+  printf '1\n' > "$state/.count-$key"
+  PATH="$fakebin:$PATH" FM_FAKE_PANE_CAPTURE="$capture_file" FM_STATE_OVERRIDE="$state" \
+    FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" FM_STALE_ESCALATE_SECS=999 FM_POLL=1 FM_SIGNAL_GRACE=1 \
+    FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" > "$out" &
+  pid=$!
+  sleep 3
+  if ! kill -0 "$pid" 2>/dev/null; then wait "$pid" 2>/dev/null; fail "watcher exited for a provably-working non-terminal stale (should absorb): $(cat "$out")"; fi
+  [ ! -s "$out" ] || { kill "$pid" 2>/dev/null; fail "absorbed stale printed a wake reason"; }
+  [ ! -s "$state/.wake-queue" ] || { kill "$pid" 2>/dev/null; fail "absorbed stale enqueued a wake (queue-safety violated)"; }
+  [ "$(cat "$state/.stale-$key" 2>/dev/null || true)" = "$pane_hash" ] || { kill "$pid" 2>/dev/null; fail "absorbed stale did not advance the suppressor"; }
+  [ -s "$state/.stale-since-$key" ] || { kill "$pid" 2>/dev/null; fail "absorbed stale did not start the wedge timer"; }
+  kill "$pid" 2>/dev/null || true; wait "$pid" 2>/dev/null || true
+  pass "provably-working non-terminal stale is absorbed in bash and never enters the durable queue"
+}
+
 test_check_output_is_queued() {
   local dir state fakebin out drain_out check_file
   dir=$(make_case check)
@@ -895,6 +932,7 @@ test_arm_never_healthy_off_dead_pid_self_heals() {
 test_concurrent_append_and_drain
 test_signal_catchup_without_running_watcher
 test_stale_enqueue_before_suppressor
+test_stale_provably_working_absorbed_not_queued
 test_check_output_is_queued
 test_singleton_start
 test_atomic_double_drain
