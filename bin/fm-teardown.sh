@@ -54,6 +54,9 @@ WS=$(grep '^workspace=' "$META" | cut -d= -f2- || true)
 HOME_PATH=$(grep '^home=' "$META" | cut -d= -f2- || true)
 HOME_WORKSPACE=$(grep '^home_workspace=' "$META" | cut -d= -f2- || true)
 PR_URL=$(grep '^pr=' "$META" | tail -1 | cut -d= -f2- || true)
+# tasktmp is recorded by fm-spawn for tasks that set up a per-task temp root
+# (/tmp/fm-<id>/); absent for tasks spawned before that change, so tolerate empty.
+TASK_TMP=$(grep '^tasktmp=' "$META" | cut -d= -f2- || true)
 
 KIND=$(grep '^kind=' "$META" | cut -d= -f2- || true)
 [ -n "$KIND" ] || KIND=ship
@@ -505,6 +508,7 @@ if [ "$KIND" = secondmate ]; then
   [ -n "$HOME_PATH" ] || HOME_PATH=$WT
   remove_firstmate_home "$HOME_PATH" "secondmate home" "$ID" "$HOME_WORKSPACE" || exit 1
   remove_secondmate_registry_entry "$ID"
+  [ -n "$TASK_TMP" ] && rm -rf "$TASK_TMP"
   rm -f "$STATE/$ID.status" "$STATE/$ID.turn-ended" "$STATE/$ID.check.sh" "$STATE/$ID.meta"
   echo "teardown $ID complete (secondmate home $HOME_PATH retired)"
   backlog_refresh_reminder
@@ -518,6 +522,9 @@ fi
 "$FM_ROOT/bin/fm-backend.sh" kill "$HANDLE" "$WS" || true
 git -C "$PROJ" worktree prune 2>/dev/null || true
 git -C "$PROJ" branch -D "fm-$ID" >/dev/null 2>&1 || true
+# Remove the per-task temp root (/tmp/fm-<id>/, incl. its gotmp/) recorded by spawn.
+# Empty (pre-fix tasks without tasktmp=) is a no-op.
+[ -n "$TASK_TMP" ] && rm -rf "$TASK_TMP"
 rm -f "$STATE/$ID.status" "$STATE/$ID.turn-ended" "$STATE/$ID.check.sh" "$STATE/$ID.meta"
 if [ "$KIND" != scout ] && [ "$MODE" != local-only ]; then
   "$FM_ROOT/bin/fm-fleet-sync.sh" "$PROJ" || true
