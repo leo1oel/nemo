@@ -81,7 +81,7 @@ projects/            cloned repos; gitignored; READ-ONLY for you
 state/               volatile runtime signals; gitignored
   <id>.status        appended by crewmates: "<state>: <note>" wake-event lines, not current-state truth
   <id>.turn-ended    touched by turn-end hooks
-  <id>.meta          written by fm-spawn: handle=, workspace=, worktree=, project=, harness=, kind=, mode=, yolo= (fm-pr-check appends pr= and verified pr_head= when available); kind=secondmate also records home= and home_workspace= and projects=
+  <id>.meta          written by fm-spawn: handle=, workspace=, worktree=, project=, harness=, kind=, mode=, yolo=, tasktmp= (fm-pr-check appends pr= and verified pr_head= when available); kind=secondmate also records home= and home_workspace= and projects=
   <id>.check.sh      optional slow poll you write per task (e.g. merged-PR check)
   .wake-queue        durable queued wakes: epoch<TAB>seq<TAB>kind<TAB>key<TAB>payload
   .watch.lock .wake-queue.lock watcher singleton and queue serialization locks

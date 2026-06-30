@@ -177,6 +177,21 @@ case "$HARNESS" in
     ;;
 esac
 
+# Per-task temp root: /tmp/fm-<id>/ with Go's build temp nested at gotmp/. Go's
+# GOTMPDIR is unset by default, so every go build/test creates numbered
+# /tmp/go-build* dirs that Go LEAVES BEHIND when interrupted (signal, timeout, OOM,
+# full disk), accumulating until the disk fills. Give each task its own GOTMPDIR so
+# fm-teardown can remove the whole root deterministically. Go won't create GOTMPDIR
+# itself, so mkdir it here. Nested (not a bare /tmp/fm-<id>/gotmp) so other per-task
+# temp can live alongside later. GOTMPDIR (not TMPDIR) is the targeted knob: TMPDIR
+# is too broad (affects every program's temp, not just Go's). Prepended to LAUNCH as
+# an env prefix - the same delivery the IS_SANDBOX/FM_HOME prefixes use - so the
+# agent and every child process (go build, go test, ...) inherit it; this covers
+# ship, scout, and secondmate launches alike. Recorded as tasktmp= in meta below.
+TASK_TMP="/tmp/fm-$ID"
+mkdir -p "$TASK_TMP/gotmp"
+LAUNCH="GOTMPDIR=$TASK_TMP/gotmp $LAUNCH"
+
 # claude_pretrust <dir>: seed claude's per-directory folder-trust for <dir> so its
 # first-launch trust dialog ("Is this a project you created or one you trust?") never
 # appears. That dialog blocks on stdin; in a freshly created worktree/home the crewmate
@@ -462,6 +477,7 @@ if [ "$KIND" = secondmate ]; then
     echo "kind=$KIND"
     echo "mode=$MODE"
     echo "yolo=$YOLO"
+    echo "tasktmp=$TASK_TMP"
     echo "home=$HOME_PATH"
     echo "home_workspace=$WS"
     echo "projects=$SECONDMATE_PROJECTS"
@@ -570,6 +586,7 @@ mkdir -p "$STATE"
   echo "kind=$KIND"
   echo "mode=$MODE"
   echo "yolo=$YOLO"
+  echo "tasktmp=$TASK_TMP"
 } > "$STATE/$ID.meta"
 
 echo "spawned $ID harness=$HARNESS kind=$KIND mode=$MODE yolo=$YOLO handle=$HANDLE worktree=$WT"
