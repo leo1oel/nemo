@@ -14,6 +14,9 @@
 #   (d) no-mistakes  + HEAD on origin remote-tracking branch   -> ALLOW  (no regression)
 #   (e) no-mistakes  + truly unpushed work                     -> REFUSE (no regression)
 #   (f) local-only + truly unpushed + --force                  -> ALLOW  (escape hatch)
+#   (g) no-mistakes + local HEAD ancestor of merged PR head     -> ALLOW  (#149 lagging local)
+#   (h) no-mistakes + replayed unpushed patch in merged PR head -> ALLOW  (#149 replayed local)
+#   (i) fm-pr-check when local HEAD lags                        -> record remote PR head (#149)
 #
 # The post-check teardown steps reach herdr only through bin/fm-backend.sh kill, which
 # runs `herdr worktree remove`; a stub `herdr` on PATH makes those steps no-ops so the
@@ -22,6 +25,7 @@ set -u
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TEARDOWN="$ROOT/bin/fm-teardown.sh"
+PR_CHECK="$ROOT/bin/fm-pr-check.sh"
 TMP_ROOT=
 
 fail() {
@@ -158,6 +162,38 @@ land_on_origin_main() {
   git -C "$tmp" -c user.email=t@t -c user.name=t commit -q -m "squash $file"
   git -C "$tmp" push -q origin HEAD:main
   rm -rf "$tmp"
+}
+
+# Append a pr= URL line to the task meta so pr_is_merged resolves PR 7 from the URL.
+append_pr_meta_url() {
+  local case_dir=$1
+  printf '%s\n' 'pr=https://github.com/example/repo/pull/7' >> "$case_dir/state/task-x1.meta"
+}
+
+# Build a commit whose tree equals <parent>'s tree, parented on <parent>, in the
+# worktree's object db. The result has <parent> (the local HEAD) as an ancestor, so
+# it models a PR head that no-mistakes advanced past the local HEAD. Echoes the sha.
+commit_tree_from_wt_head() {
+  local case_dir=$1 parent=$2 msg=$3 tree
+  tree=$(git -C "$case_dir/wt" rev-parse "$parent^{tree}") || return 1
+  printf '%s\n' "$msg" | git -C "$case_dir/wt" -c user.email=t@t -c user.name=t commit-tree "$tree" -p "$parent"
+}
+
+# Land <file>=<content> as a commit on a NEW origin branch <branch> (off the default
+# baseline), simulating a squash PR head that carries a patch equivalent to the task's
+# unpushed commit. Fetches it into the project so the worktree's shared object db has
+# the head. Echoes the head sha. Args: case_dir branch file content msg
+land_equivalent_patch_on_origin_branch() {
+  local case_dir=$1 branch=$2 file=$3 content=$4 msg=$5 tmp
+  tmp="$case_dir/_equiv"
+  git clone -q "$case_dir/origin.git" "$tmp"
+  printf '%s\n' "$content" > "$tmp/$file"
+  git -C "$tmp" add -- "$file"
+  git -C "$tmp" -c user.email=t@t -c user.name=t commit -q -m "$msg"
+  git -C "$tmp" push -q origin "HEAD:refs/heads/$branch"
+  git -C "$case_dir/project" fetch -q origin "$branch"
+  rm -rf "$tmp"
+  git -C "$case_dir/project" rev-parse "refs/remotes/origin/$branch"
 }
 
 # Override the GitHub mocks to report PR 7 as MERGED with the supplied head sha,
@@ -348,6 +384,81 @@ test_squash_merged_branch_deleted_allows() {
   pass "no-mistakes squash-merged PR with deleted branch is torn down (the fix)"
 }
 
+# #149: the merged PR head is no longer required to equal the local HEAD exactly.
+# A local HEAD that is an ANCESTOR of the merged PR head (no-mistakes advanced the
+# branch in the PR) is landed.
+test_squash_merged_pr_allows_when_head_ancestor_of_pr_head() {
+  local case_dir rc local_head pr_head
+  case_dir=$(make_case squash-ancestor)
+  write_meta "$case_dir" no-mistakes ship
+  wt_commit_file "$case_dir" feature.txt hello "add feature"
+  append_pr_meta_url "$case_dir"
+  local_head=$(git -C "$case_dir/wt" rev-parse HEAD)
+  pr_head=$(commit_tree_from_wt_head "$case_dir" "$local_head" "no-mistakes follow-up")
+  add_gh_pr_merged_for_head "$case_dir" "$pr_head"
+
+  set +e
+  run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 0 "$rc" "squash-ancestor: teardown should succeed when local HEAD is in the merged PR head"
+  ! grep -q REFUSED "$case_dir/stderr" || fail "squash-ancestor: teardown printed a REFUSED line"
+  pass "squash-merged PR accepts a local HEAD that is an ancestor of the final PR head"
+}
+
+# #149: unpushed local commits whose PATCH IDs appear in the merged PR head (a squash
+# replayed the branch under a different commit) are landed, even though no local
+# commit is reachable from the PR head.
+test_squash_merged_pr_allows_replayed_unpushed_patch() {
+  local case_dir rc parent_head pr_head
+  case_dir=$(make_case squash-replayed-patch)
+  write_meta "$case_dir" no-mistakes ship
+  wt_commit_file "$case_dir" local-parent.txt parent "local parent"
+  parent_head=$(git -C "$case_dir/wt" rev-parse HEAD)
+  git -C "$case_dir/wt" push -q origin "$parent_head:refs/heads/fm/task-x1"
+  git -C "$case_dir/project" fetch -q origin fm/task-x1
+  wt_commit_file "$case_dir" feature.txt hello "add feature"
+  append_pr_meta_url "$case_dir"
+  pr_head=$(land_equivalent_patch_on_origin_branch "$case_dir" pr-head feature.txt hello "add feature")
+  add_gh_pr_merged_for_head "$case_dir" "$pr_head"
+
+  set +e
+  run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 0 "$rc" "squash-replayed-patch: teardown should succeed when an unpushed local patch is in the merged PR head"
+  ! grep -q REFUSED "$case_dir/stderr" || fail "squash-replayed-patch: teardown printed a REFUSED line"
+  pass "squash-merged PR accepts replayed unpushed local patches contained in the PR head"
+}
+
+# #149: fm-pr-check records GitHub's PR head even when the local worktree lags behind
+# it (it no longer requires local HEAD == remote head to record pr_head=).
+test_pr_check_records_remote_head_when_local_lags() {
+  local case_dir local_head pr_head
+  case_dir=$(make_case pr-check-local-lags)
+  write_meta "$case_dir" no-mistakes ship
+  wt_commit_file "$case_dir" feature.txt hello "add feature"
+  local_head=$(git -C "$case_dir/wt" rev-parse HEAD)
+  pr_head=$(commit_tree_from_wt_head "$case_dir" "$local_head" "no-mistakes follow-up")
+  add_gh_pr_merged_for_head "$case_dir" "$pr_head"
+
+  # stderr to /dev/null: fm-pr-check calls fm-guard, whose tangle check reads FM_ROOT
+  # (=$ROOT here); a local run on a feature branch would print a tangle banner that is
+  # irrelevant to what this test asserts (the recorded pr_head=).
+  FM_ROOT_OVERRIDE="$ROOT" \
+  FM_STATE_OVERRIDE="$case_dir/state" \
+  PATH="$case_dir/fakebin:$PATH" \
+    "$PR_CHECK" task-x1 https://github.com/example/repo/pull/7 >/dev/null 2>&1
+
+  grep -qxF "pr_head=$pr_head" "$case_dir/state/task-x1.meta" \
+    || fail "pr-check-local-lags: did not record GitHub PR head"
+  ! grep -qxF "pr_head=$local_head" "$case_dir/state/task-x1.meta" \
+    || fail "pr-check-local-lags: recorded local HEAD instead of remote PR head"
+  pass "fm-pr-check records the remote PR head when the local worktree lags"
+}
+
 # #96 fallback: no PR is found, but the branch's content is already in the
 # up-to-date default branch (a squash landed it under a different commit).
 test_content_in_default_allows() {
@@ -441,6 +552,9 @@ test_local_only_merged_to_local_main_allows
 test_no_mistakes_origin_remote_allows
 test_no_mistakes_truly_unpushed_refuses
 test_squash_merged_branch_deleted_allows
+test_squash_merged_pr_allows_when_head_ancestor_of_pr_head
+test_squash_merged_pr_allows_replayed_unpushed_patch
+test_pr_check_records_remote_head_when_local_lags
 test_content_in_default_allows
 test_gh_error_content_absent_refuses
 test_local_only_force_overrides_unpushed

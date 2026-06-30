@@ -6,10 +6,11 @@
 # discards it (and kills the agent process). Work has landed when it is reachable from
 # any remote-tracking branch (a fork counts as a remote, so upstream-contribution PRs
 # pushed to a fork satisfy this in any mode), OR - for a normal ship task whose commits
-# are not so reachable - when its PR is merged and GitHub reports the current HEAD as
-# that PR's head, or its content is already present in the up-to-date default branch.
-# This recognizes the common squash-merge-then-delete-branch flow, where the branch's
-# own commits live nowhere on a remote yet the change is fully in the default branch.
+# are not so reachable - when its PR is merged and GitHub reports a PR head that
+# contains the current local work, or its content is already present in the up-to-date
+# default branch. This recognizes the common squash-merge-then-delete-branch flow,
+# where the branch's own commits live nowhere on a remote yet the change is fully in
+# the default branch.
 # A gh lookup error falls back to the content check; if that is also inconclusive,
 # teardown refuses rather than risk discarding unlanded work. Uncommitted changes are
 # never landed. local-only projects additionally accept work merged into the local
@@ -96,11 +97,76 @@ pr_number_from_branch() {
   printf '%s' "$n"
 }
 
-# Is the worktree's PR merged for this exact HEAD? Resolves the PR from the
-# recorded pr= URL first, then from the branch name, and asks GitHub for both the
-# PR state and head. Returns non-zero when the PR is not merged, the current HEAD
-# is not the PR head, no PR is found, or any gh error occurs - the caller then
-# falls back to the content check.
+pr_number_from_target() {
+  local target=$1 n
+  case "$target" in
+    '' ) return 1 ;;
+    *"/pull/"*)
+      n=${target##*/pull/}
+      n=${n%%[!0-9]*}
+      ;;
+    [0-9]*)
+      n=${target%%[!0-9]*}
+      ;;
+    *) return 1 ;;
+  esac
+  [ -n "$n" ] || return 1
+  printf '%s' "$n"
+}
+
+# Make sure the PR head commit object is present locally. A squash-merged-and-
+# deleted branch's head can be a commit this worktree never fetched, so fall back to
+# fetching refs/pull/<n>/head from origin. Returns non-zero if it cannot be obtained.
+ensure_commit_object() {
+  local target=$1 commit=$2 n
+  git -C "$WT" cat-file -e "$commit^{commit}" 2>/dev/null && return 0
+  n=$(pr_number_from_target "$target") || return 1
+  git -C "$WT" remote get-url origin >/dev/null 2>&1 || return 1
+  git -C "$WT" fetch --quiet origin "refs/pull/$n/head" >/dev/null 2>&1 || return 1
+  git -C "$WT" cat-file -e "$commit^{commit}" 2>/dev/null
+}
+
+patch_id_for_commit() {
+  local commit=$1
+  git -C "$WT" show --pretty=medium --no-ext-diff "$commit" 2>/dev/null \
+    | git patch-id --stable 2>/dev/null \
+    | awk 'NR == 1 { print $1 }'
+}
+
+# True when every commit not on any remote (the unpushed local work) has a patch-id
+# present in the PR head's history since their merge-base. This recognizes a squash
+# merge: the branch's own commits live nowhere on a remote, but their combined change
+# is in the merged head, so each unpushed commit's patch-id appears among the head's.
+unpushed_patches_are_in_pr_head() {
+  local pr_head=$1 current base pr_patch_ids commit patch_id unpushed
+  current=$(git -C "$WT" rev-parse --verify HEAD 2>/dev/null) || return 1
+  base=$(git -C "$WT" merge-base "$current" "$pr_head" 2>/dev/null) || return 1
+  pr_patch_ids=$(
+    git -C "$WT" log --format=%H "$base..$pr_head" -- 2>/dev/null \
+      | while IFS= read -r commit; do
+          patch_id_for_commit "$commit"
+        done \
+      | sed '/^$/d' \
+      | sort -u
+  ) || return 1
+  [ -n "$pr_patch_ids" ] || return 1
+  unpushed=$(git -C "$WT" log --format=%H HEAD --not --remotes -- 2>/dev/null) || return 1
+  [ -n "$unpushed" ] || return 1
+  while IFS= read -r commit; do
+    [ -n "$commit" ] || continue
+    patch_id=$(patch_id_for_commit "$commit") || return 1
+    [ -n "$patch_id" ] || return 1
+    printf '%s\n' "$pr_patch_ids" | grep -qxF "$patch_id" || return 1
+  done <<EOF
+$unpushed
+EOF
+}
+
+# Is the worktree's PR merged for local work contained in that PR? Resolves the
+# PR from the recorded pr= URL first, then from the branch name, and asks GitHub
+# for both the PR state and head. Returns non-zero when the PR is not merged, the
+# current work is not contained in the PR head, no PR is found, or any gh error
+# occurs - the caller then falls back to the content check.
 pr_is_merged() {
   local branch=$1 target view state head current
   if [ -n "$PR_URL" ]; then
@@ -118,8 +184,10 @@ pr_is_merged() {
     *) return 1 ;;
   esac
   [ -n "$head" ] || return 1
+  ensure_commit_object "$target" "$head" || return 1
   current=$(git -C "$WT" rev-parse --verify HEAD 2>/dev/null) || return 1
-  [ "$current" = "$head" ]
+  git -C "$WT" merge-base --is-ancestor "$current" "$head" 2>/dev/null && return 0
+  unpushed_patches_are_in_pr_head "$head"
 }
 
 # Is the branch's content already present in the up-to-date default branch? Fetches
@@ -149,8 +217,9 @@ content_in_default() {
 
 # Has the worktree's committed work actually LANDED, though its commits are not
 # reachable from any remote-tracking branch? True when a merged PR proves the
-# current HEAD, OR the content is already in the default branch (fallback, which
-# also covers the no-PR and gh-error paths). False only for genuinely unlanded work.
+# current local work is contained in the PR head, OR the content is already in the
+# default branch (fallback, which also covers the no-PR and gh-error paths). False
+# only for genuinely unlanded work.
 work_is_landed() {
   local branch=$1
   pr_is_merged "$branch" && return 0
@@ -487,10 +556,11 @@ if [ "$KIND" != secondmate ] && [ -d "$WT" ] && [ "$FORCE" != "--force" ]; then
       exit 1
     elif [ -n "$unpushed" ]; then
       # Commits not reachable from any remote. Before refusing, recognize LANDED work:
-      # a merged PR for the current HEAD or content already in the up-to-date default
-      # branch. On a gh lookup error work_is_landed falls back to the content check,
-      # and if that is also inconclusive it returns false - so we never silently allow
-      # teardown of possibly-unlanded work; only genuinely unlanded work is refused.
+      # a merged PR whose head contains the current local work, or content already in
+      # the up-to-date default branch. On a gh lookup error work_is_landed falls back
+      # to the content check, and if that is also inconclusive it returns false - so
+      # we never silently allow teardown of possibly-unlanded work; only genuinely
+      # unlanded work is refused.
       branch=$(git -C "$WT" rev-parse --abbrev-ref HEAD 2>/dev/null || echo HEAD)
       if ! work_is_landed "$branch"; then
         echo "REFUSED: worktree $WT has work not on any remote and not landed." >&2
