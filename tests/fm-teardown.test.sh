@@ -58,7 +58,7 @@ make_case() {
   local name=$1 case_dir fakebin
   case_dir="$TMP_ROOT/$name"
   fakebin="$case_dir/fakebin"
-  mkdir -p "$case_dir/state" "$fakebin"
+  mkdir -p "$case_dir/state" "$case_dir/config" "$fakebin"
 
   # herdr mock for the post-check teardown steps (fm-backend.sh kill -> herdr worktree
   # remove). Refuse logic exits before these run; the ALLOW cases need it so the script
@@ -260,6 +260,7 @@ run_teardown() {
   local case_dir=$1; shift
   FM_ROOT_OVERRIDE="$ROOT" \
   FM_STATE_OVERRIDE="$case_dir/state" \
+  FM_CONFIG_OVERRIDE="$case_dir/config" \
   PATH="$case_dir/fakebin:$PATH" \
     "$TEARDOWN" task-x1 "$@"
 }
@@ -546,6 +547,27 @@ test_teardown_prompts_tasks_axi_done_when_compatible() {
   pass "teardown prompts tasks-axi backlog refresh when compatible"
 }
 
+# #145: config/backlog-backend=manual forces the hand-edit reminder even when a
+# compatible tasks-axi is on PATH (the home opted out of the default backend).
+test_teardown_manual_backend_prompts_hand_edit_even_when_tasks_axi_present() {
+  local case_dir out
+  case_dir=$(make_case tasks-axi-manual-optout)
+  write_meta "$case_dir" no-mistakes ship
+  printf '%s\n' 'pr=https://github.com/example/repo/pull/7' >> "$case_dir/state/task-x1.meta"
+  printf '%s\n' manual > "$case_dir/config/backlog-backend"
+  add_compatible_tasks_axi "$case_dir"
+
+  # stderr to the case file: a local run on a feature branch prints fm-guard's
+  # tangle banner (FM_ROOT=$ROOT), irrelevant to the reminder text this asserts.
+  out=$(run_teardown "$case_dir" 2> "$case_dir/stderr") || fail "teardown failed with manual backlog backend"
+  printf '%s\n' "$out" | grep -F 'Update data/backlog.md - move task-x1 to Done' >/dev/null \
+    || fail "teardown did not prompt manual backlog update under opt-out: $out"
+  if printf '%s\n' "$out" | grep -F 'tasks-axi done' >/dev/null; then
+    fail "teardown prompted tasks-axi despite manual backend opt-out: $out"
+  fi
+  pass "teardown honors config/backlog-backend=manual even when tasks-axi is compatible"
+}
+
 test_local_only_fork_remote_allows
 test_local_only_truly_unpushed_refuses
 test_local_only_merged_to_local_main_allows
@@ -559,3 +581,4 @@ test_content_in_default_allows
 test_gh_error_content_absent_refuses
 test_local_only_force_overrides_unpushed
 test_teardown_prompts_tasks_axi_done_when_compatible
+test_teardown_manual_backend_prompts_hand_edit_even_when_tasks_axi_present
