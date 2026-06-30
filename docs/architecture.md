@@ -59,7 +59,7 @@ Spawn refuses to launch unless the opened worktree is a genuine isolated worktre
 
 Ship tasks change projects and ship by project mode (`no-mistakes`, `direct-PR`, or `local-only`).
 Scout tasks investigate, plan, reproduce bugs, or audit, then leave a report at `data/<id>/report.md` and never push.
-Teardown refuses to discard a ship worktree until its work has landed - remote-reachable, a merged PR for the current HEAD, or content already in the up-to-date default branch - so the common squash-merge-then-delete-branch flow tears down cleanly while genuinely unlanded or uncommitted work still refuses.
+Teardown refuses to discard a ship worktree until its work has landed - remote-reachable, a merged PR whose GitHub head contains the current local work (an exact match, a local HEAD that is an ancestor of the PR head, or unpushed local patches whose patch IDs appear in the PR head after a squash replay), or content already in the up-to-date default branch - so the common squash-merge-then-delete-branch flow tears down cleanly while genuinely unlanded or uncommitted work still refuses.
 
 ## Project modes are explicit
 
