@@ -37,6 +37,7 @@ FM_ROOT="${FM_ROOT_OVERRIDE:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 FM_HOME="${FM_HOME:-${FM_ROOT_OVERRIDE:-$FM_ROOT}}"
 STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
 DATA="${FM_DATA_OVERRIDE:-$FM_HOME/data}"
+CONFIG="${FM_CONFIG_OVERRIDE:-$FM_HOME/config}"
 SECONDMATE_REG="$DATA/secondmates.md"
 SUB_HOME_MARKER=".fm-secondmate-home"
 SUB_HOME_WS_MARKER=".fm-secondmate-home.workspace"
@@ -226,14 +227,16 @@ work_is_landed() {
   content_in_default
 }
 
-# Emit the post-teardown backlog-refresh reminder. When a compatible tasks-axi
-# (0.1.1+) is on PATH, prompt the matching `tasks-axi done` verb (which also
-# auto-prunes/archives Done) plus `tasks-axi ready`; otherwise fall back to the
-# hand-edit reminder. The secondmate retirement case keeps its data/secondmates.md
-# hint, which the verb path does not cover. Mirrors AGENTS.md section 10.
+# Emit the post-teardown backlog-refresh reminder. When the default tasks-axi
+# backend is active for this home (config/backlog-backend not "manual") AND a
+# compatible tasks-axi (0.1.1+) is on PATH, prompt the matching `tasks-axi done`
+# verb (which also auto-prunes/archives Done) plus `tasks-axi ready`; otherwise
+# fall back to the hand-edit reminder. The secondmate retirement case keeps its
+# data/secondmates.md hint, which the verb path does not cover. Mirrors AGENTS.md
+# section 10.
 backlog_refresh_reminder() {
   local pr done_cmd report_path
-  if fm_tasks_axi_compatible; then
+  if fm_tasks_axi_backend_available "$CONFIG"; then
     case "$KIND" in
       scout)
         report_path="data/$ID/report.md"

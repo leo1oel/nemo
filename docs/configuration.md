@@ -7,10 +7,12 @@ Where firstmate's behavior and per-fleet state are configured.
 The shared orchestrator behavior lives in `AGENTS.md` - edit it like any prompt when the fleet is empty, or dispatch shared-repo edits to a crewmate while tasks are in flight.
 `CLAUDE.md` is a symlink to it, and `.claude/skills` symlinks to `.agents/skills`.
 
-## Backlog backend (`.tasks.toml` / `tasks-axi`)
+## Backlog backend (`.tasks.toml` / `config/backlog-backend`)
 
-`tasks-axi` is optional backlog tooling: the tracked `.tasks.toml` pins its markdown backend to `data/backlog.md`, with `done_keep = 10` and an archive at `data/done-archive.md`.
-When a compatible build (0.1.1 or newer, by the probe in `bin/fm-tasks-axi-lib.sh`) is on `PATH`, the first mate routes routine backlog mutations through its verbs and keeps secondmate transfers behind `fm-backlog-handoff.sh` validation; without it, backlog bookkeeping stays manual exactly as before.
+`tasks-axi` is the default backlog backend: the tracked `.tasks.toml` pins its markdown backend to `data/backlog.md`, with `done_keep = 10` and an archive at `data/done-archive.md`.
+When the default backend is selected and a compatible build (0.1.1 or newer, by the probe in `bin/fm-tasks-axi-lib.sh`) is on `PATH`, the first mate routes routine backlog mutations through its verbs and keeps secondmate transfers behind `fm-backlog-handoff.sh` validation.
+Set the local, gitignored `config/backlog-backend` file to `manual` to force manual backlog editing even when `tasks-axi` is installed; absent or `tasks-axi` selects the default backend, and a missing or incompatible `tasks-axi` falls back to manual editing on its own.
+The file format is unchanged in both modes: tasks-axi and manual edits produce the same `## In flight`, `## Queued`, and `## Done` sections.
 
 ## Captain preferences (`data/captain.md`)
 

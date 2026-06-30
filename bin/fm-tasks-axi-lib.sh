@@ -1,8 +1,11 @@
 # shellcheck shell=bash
-# Shared tasks-axi compatibility probe for teardown (and any other firstmate
-# script that wants to route backlog mutations through tasks-axi verbs).
+# Shared tasks-axi backend selection and compatibility probe for teardown (and any
+# other firstmate script that wants to route backlog mutations through tasks-axi).
 # Usage: . bin/fm-tasks-axi-lib.sh
 # Compatible means tasks-axi --version reports 0.1.1 or newer.
+# `config/backlog-backend=manual` opts out; absent or any other value keeps the
+# default tasks-axi backend path, falling back to manual when the tool is not
+# compatible.
 
 fm_tasks_axi_version_parts() {
   local output
@@ -26,4 +29,34 @@ fm_tasks_axi_compatible() {
   [ "$major" -eq 0 ] && [ "$minor" -gt 1 ] && return 0
   [ "$major" -eq 0 ] && [ "$minor" -eq 1 ] && [ "$patch" -ge 1 ] && return 0
   return 1
+}
+
+# The selected backlog backend for a home, read from <config_dir>/backlog-backend.
+# Absent or empty defaults to tasks-axi; any other value is returned verbatim
+# (only "manual" has a defined meaning today).
+fm_backlog_backend_value() {
+  local config_dir=$1 backend_file value
+  backend_file="$config_dir/backlog-backend"
+  if [ -f "$backend_file" ]; then
+    value=$(tr -d '[:space:]' < "$backend_file" 2>/dev/null || true)
+    [ -n "$value" ] || value=tasks-axi
+    printf '%s\n' "$value"
+    return 0
+  fi
+  printf '%s\n' tasks-axi
+}
+
+# 0 when the home has explicitly opted out of tasks-axi (config/backlog-backend=manual).
+fm_backlog_backend_manual() {
+  local config_dir=$1
+  [ "$(fm_backlog_backend_value "$config_dir")" = manual ]
+}
+
+# 0 when the tasks-axi backend should be used for this home: not opted out AND a
+# compatible tasks-axi is on PATH. This is the single gate firstmate scripts check
+# before routing backlog mutations through tasks-axi rather than hand-editing.
+fm_tasks_axi_backend_available() {
+  local config_dir=$1
+  fm_backlog_backend_manual "$config_dir" && return 1
+  fm_tasks_axi_compatible
 }

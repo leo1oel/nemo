@@ -65,7 +65,7 @@ AGENTS.md            this file (CLAUDE.md is a symlink to it)
 CONTRIBUTING.md      contributor workflow and repo conventions
 README.md            public overview and development notes
 docs/                concise reference tree (architecture, configuration, scripts) the README links to; tracked
-.tasks.toml          tracked tasks-axi markdown backend config; drives backlog mutations when a compatible tasks-axi is on PATH (section 10), otherwise inert
+.tasks.toml          tracked tasks-axi markdown backend config for the default backlog backend (section 10); a home opts out with the local config/backlog-backend file set to "manual"
 .github/workflows/   shared CI and PR enforcement, committed
 .agents/skills/      shared skills, committed
 .claude/skills       symlink to .agents/skills for claude compatibility
@@ -105,7 +105,7 @@ To enumerate live crewmates, read `state/*.meta` (or `bin/fm-backend.sh list`).
 ## 3. Session start
 
 Your tooling (herdr, gh, no-mistakes, and the axi helpers, including `tasks-axi`) is installed and kept current by the environment (the terminal config), so assume it is present; there is no bootstrap step to run.
-`tasks-axi` is optional: when a compatible build (0.1.1 or newer) is on PATH, firstmate routes routine `data/backlog.md` mutations through its verbs instead of hand-editing the file, exactly as section 10 describes; when it is absent or fails the compatibility probe in `bin/fm-tasks-axi-lib.sh`, firstmate hand-edits `data/backlog.md` exactly as before, so backlog bookkeeping keeps working either way.
+`tasks-axi` is the default backlog backend: unless a home opts out with `config/backlog-backend=manual`, when a compatible build (0.1.1 or newer) is on PATH firstmate routes routine `data/backlog.md` mutations through its verbs instead of hand-editing the file, exactly as section 10 describes; when it is opted out, absent, or fails the compatibility probe in `bin/fm-tasks-axi-lib.sh`, firstmate hand-edits `data/backlog.md` exactly as before, so backlog bookkeeping keeps working either way.
 
 Read `data/projects.md`, the fleet registry, to load what each project is.
 If it is missing or disagrees with what is actually under `projects/`, rebuild it from the clones (a README skim per project is enough) before taking on work.
@@ -587,8 +587,9 @@ Re-evaluate Queued on every teardown and every heartbeat: anything whose blocker
 Keep Done to the 10 most recent entries; prune older ones whenever you add to the section.
 Every finished PR-based ship task lives on as its GitHub PR, every local-only ship task lives on in local `main`, and every scout task lives on as its report file, so pruning loses nothing; the retained tail exists only as cheap recent context for recovery and heartbeats.
 
-A tracked `.tasks.toml` at this repo root pins the `tasks-axi` markdown backend to `data/backlog.md`, with `done_keep = 10` and an archive at `data/done-archive.md`.
-When a compatible `tasks-axi` is on PATH, firstmate mutates the backlog through its verbs instead of hand-editing, with secondmate handoffs still going through the validated helper described in section 6.
+A tracked `.tasks.toml` at this repo root pins the default `tasks-axi` markdown backend to `data/backlog.md`, with `done_keep = 10` and an archive at `data/done-archive.md`.
+The local, gitignored `config/backlog-backend` file is the explicit opt-out knob: absent or `tasks-axi` selects the default tasks-axi backend, while `manual` forces hand-editing even when `tasks-axi` is installed (`bin/fm-tasks-axi-lib.sh` exposes this as `fm_tasks_axi_backend_available`, the single gate firstmate scripts check).
+When the default backend is selected and a compatible `tasks-axi` is on PATH, firstmate mutates the backlog through its verbs instead of hand-editing, with secondmate handoffs still going through the validated helper described in section 6.
 Compatible means the shared probe in `bin/fm-tasks-axi-lib.sh` accepts `tasks-axi --version` as 0.1.1 or newer.
 The `## In flight` / `## Queued` / `## Done` format above stays the contract: the verbs edit `data/backlog.md` in place, byte-exact, preserving whatever item forms the file already uses - the `- [ ]` in-flight and queued forms, the `- [x]` done form, and `blocked-by: <id> - <reason>` - rather than reformatting them.
 Map firstmate's real backlog operations to the approved commands:
@@ -603,9 +604,9 @@ Map firstmate's real backlog operations to the approved commands:
 - Hand a task off to a secondmate home: keep using `bin/fm-backlog-handoff.sh <secondmate-id> <item-key>...`; do not call bare `tasks-axi mv` for this path, because the helper resolves and validates the secondmate home before moving anything.
 - Normalize the file: `tasks-axi render` rewrites every id'd task in canonical form and leaves free-form lines untouched.
 
-`tasks-axi done` auto-prunes Done to `done_keep = 10` and archives the pruned entries to `data/done-archive.md`, which supersedes the manual "keep Done to the 10 most recent" pruning above: when compatible `tasks-axi` is present you do not hand-prune Done, and nothing is lost because pruned entries are archived rather than deleted.
-When `tasks-axi` is absent or fails the compatibility probe, every firstmate home (main and each secondmate) hand-edits `data/backlog.md` exactly as this section describes, including the manual Done pruning.
-Secondmates inherit this automatically: each secondmate home carries the same `AGENTS.md` and its own `.tasks.toml`, so the same present-or-absent rule applies in every home with no separate setup.
+`tasks-axi done` auto-prunes Done to `done_keep = 10` and archives the pruned entries to `data/done-archive.md`, which supersedes the manual "keep Done to the 10 most recent" pruning above: when the default backend is active and compatible you do not hand-prune Done, and nothing is lost because pruned entries are archived rather than deleted.
+When the backend is opted out with `config/backlog-backend=manual`, or `tasks-axi` is absent or fails the compatibility probe, every firstmate home hand-edits `data/backlog.md` exactly as this section describes, including the manual Done pruning.
+Each firstmate home (main and each secondmate) reads its own `config/backlog-backend` and carries the same `AGENTS.md` and its own `.tasks.toml`, so the backend decision applies per home with no separate setup; if the captain wants a secondmate home to match the primary's opt-out, set `config/backlog-backend=manual` in that home too.
 
 ## 11. Crewmate briefs
 
