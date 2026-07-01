@@ -29,7 +29,7 @@ Read each script's header comment before first use.
 | `fm-marker-lib.sh`       | The from-firstmate request marker ([fm-from-firstmate] + an untypable separator) that tells a secondmate a relayed request apart from a captain-typed message |
 | `fm-peek.sh`             | Print a bounded tail of a crewmate pane                                                                             |
 | `fm-pr-check.sh`         | Record a PR-ready task and arm the watcher's merge poll                                                             |
-| `fm-pr-merge.sh`         | Merge a task PR through `gh-axi` after recording PR metadata with `fm-pr-check.sh`                                  |
+| `fm-pr-merge.sh`         | Require a full GitHub PR URL, record `pr=` and available `pr_head=` via `fm-pr-check.sh`, parse it into `gh-axi pr merge <n> --repo <owner>/<repo>`, default to `--squash` unless a merge method is forwarded, and reject malformed URLs or repo overrides |
 | `fm-promote.sh`          | Promote a scout task in place so it becomes a protected ship task                                                   |
 | `fm-teardown.sh`         | Remove the worktree and close its herdr pane, or retire a secondmate home; refuses unless ship work has landed (remote-reachable, a merged PR for the current HEAD, or content already in the default branch - so squash-merged-and-deleted branches tear down cleanly), requires scout reports, checks child work, and reminds backlog refresh |
 | `fm-lock.sh`             | Single-firstmate session lock                                                                                       |
