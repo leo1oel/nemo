@@ -7,12 +7,12 @@ Where firstmate's behavior and per-fleet state are configured.
 The shared orchestrator behavior lives in `AGENTS.md` - edit it like any prompt when the fleet is empty, or dispatch shared-repo edits to a crewmate while tasks are in flight.
 `CLAUDE.md` is a symlink to it, and `.claude/skills` symlinks to `.agents/skills`.
 
-## Backlog backend (`.tasks.toml` / `config/backlog-backend`)
+## Backlog backend (`.tasks.toml`)
 
-`tasks-axi` is the default backlog backend: the tracked `.tasks.toml` pins its markdown backend to `data/backlog.md`, with `done_keep = 10` and an archive at `data/done-archive.md`.
-When the default backend is selected and a compatible build (0.1.1 or newer, by the probe in `bin/fm-tasks-axi-lib.sh`) is on `PATH`, the first mate routes routine backlog mutations through its verbs and keeps secondmate transfers behind `fm-backlog-handoff.sh` validation.
-Set the local, gitignored `config/backlog-backend` file to `manual` to force manual backlog editing even when `tasks-axi` is installed; absent or `tasks-axi` selects the default backend, and a missing or incompatible `tasks-axi` falls back to manual editing on its own.
-The file format is unchanged in both modes: tasks-axi and manual edits produce the same `## In flight`, `## Queued`, and `## Done` sections.
+`tasks-axi` is the required backlog backend: the tracked `.tasks.toml` pins its markdown backend to `data/backlog.md`, with `done_keep = 10` and an archive at `data/done-archive.md`.
+The environment keeps `tasks-axi` installed and current.
+The first mate routes routine backlog mutations through `tasks-axi` verbs and keeps secondmate transfers behind `fm-backlog-handoff.sh` validation.
+Do not hand-edit `data/backlog.md`.
 
 ## Captain preferences (`data/captain.md`)
 
@@ -23,7 +23,7 @@ Personal preferences for one captain's fleet live locally in `data/captain.md`; 
 Persistent secondmate routes live locally in `data/secondmates.md`.
 Each line records the secondmate id, charter summary, absolute home path, natural-language scope, project clone list, and added date; `fm-home-seed.sh validate` refuses duplicate ids, duplicate homes, and nested or overlapping homes.
 Use `fm-home-seed.sh <id> - <project>...` to provision a fresh herdr worktree of the firstmate repo as the secondmate home; herdr never recycles it, so the home survives across restarts until explicit retirement or seed rollback removes it.
-Secondmate routes cover `no-mistakes` and `direct-PR` projects; `local-only` projects remain main-firstmate work.
+Secondmate routes can cover any registered project whose scope matches the secondmate charter.
 Set `FM_SECONDMATE_CHARTER` to seed from inline charter text when no filled charter brief exists; set `FM_SECONDMATE_SCOPE` when the routing scope should differ from the charter text.
 
 ## `FM_HOME`
@@ -57,7 +57,7 @@ FM_SIGNAL_GRACE=30      # seconds to coalesce nearby status and turn-end signals
 FM_SEND_SETTLE=1        # seconds fm-send pauses after a successful text submit (0 disables)
 FM_FLEET_PRUNE=1        # set to 0 to skip pruning local branches whose upstream is gone
 FM_BUSY_REGEX='esc to interrupt'   # Claude's busy-pane signature
-FM_CAPTAIN_RE='done:|needs-decision:|blocked:|failed:|PR ready|checks green|ready in branch|merged'   # status regex that makes watcher and daemon signal/stale/scan output captain-relevant
+FM_CAPTAIN_RE='done:|needs-decision:|blocked:|failed:|PR ready|checks green|merged'   # status regex that makes watcher and daemon signal/stale/scan output captain-relevant
 FM_STALE_ESCALATE_SECS=240   # idle seconds before a provably-working non-terminal stale pane escalates; not-provably-working stale wakes surface immediately
 FM_WATCH_TRIAGE_LOG_MAX_BYTES=262144   # size cap for the watcher's absorbed-wake debug log
 FM_CREW_STATE_BIN=bin/fm-crew-state.sh   # test override for the current-state reader used by provably-working watcher triage

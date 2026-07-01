@@ -842,7 +842,7 @@ test_arm_waits_for_peer_beacon_after_child_stands_down() {
   armout="$dir/arm.out"
   sleep 300 &
   peer=$!
-  identity=$(FM_STATE_OVERRIDE="$state" bash -c '. "$1"; fm_pid_identity "$2"' _ "$LIB" "$peer") || fail "could not identify peer pid"
+  identity="test-peer-$peer"
   mkdir "$state/.watch.lock"
   printf '%s\n' "$peer" > "$state/.watch.lock/pid"
   printf '%s\n' "$dir" > "$state/.watch.lock/fm-home"

@@ -22,7 +22,7 @@ lives in [`AGENTS.md`](../AGENTS.md).
      ▼            ▼               ▼
   herdr git worktree (clean, disposable, parallel-safe)
      │
-     ├─ ship: project mode ► PR/local merge ► teardown
+     ├─ ship: project mode ► PR ► teardown
      │
      └─ scout: report at data/<id>/report.md ► relay findings ► teardown
 ```
@@ -57,20 +57,20 @@ Spawn refuses to launch unless the opened worktree is a genuine isolated worktre
 
 ## Two task shapes
 
-Ship tasks change projects and ship by project mode (`no-mistakes`, `direct-PR`, or `local-only`).
+Ship tasks change projects and ship by project mode (`no-mistakes` or `direct-PR`).
 Scout tasks investigate, plan, reproduce bugs, or audit, then leave a report at `data/<id>/report.md` and never push.
 Teardown refuses to discard a ship worktree until its work has landed - remote-reachable, a merged PR whose GitHub head contains the current local work (an exact match, a local HEAD that is an ancestor of the PR head, or unpushed local patches whose patch IDs appear in the PR head after a squash replay), or content already in the up-to-date default branch - so the common squash-merge-then-delete-branch flow tears down cleanly while genuinely unlanded or uncommitted work still refuses.
 
 ## Project modes are explicit
 
-`data/projects.md` records each project's delivery mode and optional `+yolo` autonomy flag.
-`no-mistakes` projects run the full validation pipeline, `direct-PR` projects open PRs without that pipeline, and `local-only` projects stay local until firstmate performs an approved fast-forward merge.
+`data/projects.md` records each project's delivery mode.
+`no-mistakes` projects run the full validation pipeline, while `direct-PR` projects open PRs without that pipeline.
 
 ## Optional secondmates
 
 For larger fleets, `data/secondmates.md` records persistent domain supervisors with natural-language scopes, project clone lists, and home paths.
 A secondmate is a crewmate whose workspace is an isolated firstmate home and whose brief is a charter; it runs the same spawn/brief/status/watcher/steer/teardown/recovery lifecycle as any direct report, but from its own `FM_HOME` with separate state, backlog, projects, and session lock.
-`fm-home-seed.sh` provisions the isolated home (with `-`, a herdr worktree of the firstmate repo that herdr never recycles, so it survives any restart), clones the listed `no-mistakes`/`direct-PR` projects into it, initializes newly cloned `no-mistakes` projects, copies the charter to `data/charter.md`, and maintains the routing table; `fm-spawn.sh --secondmate` launches it through the same herdr and status-file path.
+`fm-home-seed.sh` provisions the isolated home (with `-`, a herdr worktree of the firstmate repo that herdr never recycles, so it survives any restart), clones the listed projects into it, initializes newly cloned `no-mistakes` projects, copies the charter to `data/charter.md`, and maintains the routing table; `fm-spawn.sh --secondmate` launches it through the same herdr and status-file path.
 Before launch, the home is fast-forwarded to the primary checkout's current default-branch commit by a purely local fast-forward (no fetch), so a freshly spawned or recovery-respawned secondmate runs the primary's instructions and tooling.
 Secondmates are idle by default: startup recovery reconciles only work already in their own home, an empty queue waits silently for routed tasks, and they never self-initiate surveys or audits.
 A secondmate is itself a firstmate, so a relayed request reaches it in its own chat, which the main firstmate never reads; `fm-send` to a `kind=secondmate` target prepends a from-firstmate marker (`fm-marker-lib.sh`) and the secondmate routes its answer back via its status file (or a doc plus a status pointer) so it surfaces to the main firstmate, while an unmarked message stays conversational captain intervention.
@@ -87,14 +87,8 @@ Ship briefs prompt crewmates to create or update those files through the normal 
 Each spawn and PR-based teardown refresh remote-backed project clones when the clone is safe to move.
 Clean default-branch clones fast-forward to `origin/<default>`, and a clean detached HEAD that holds no unique commits is re-attached to the default branch before the same fast-forward path runs.
 Dirty clones, non-default branches, detached HEADs with unique commits, diverged defaults, and default branches checked out in another worktree are reported as `STUCK:` with their behind count and left untouched.
-Local-only projects, clones without an origin remote, and fetch failures remain benign skips.
+Clones without an origin remote and fetch failures remain benign skips.
 The refresh also prunes local branches whose remote is gone and that no worktree still needs.
-
-## Self-updates stay safe
-
-`/updatefirstmate` fast-forwards the running firstmate repo and registered secondmate homes from `origin`, then re-reads updated instructions and nudges updated secondmates without touching project clones.
-The update is fast-forward only: dirty, diverged, offline, and off-default/off-lease targets are reported and left untouched.
-The fast-forward machinery lives in `bin/fm-ff-lib.sh`, shared with the spawn-time secondmate sync.
 
 ## Restart-proof
 

@@ -11,8 +11,8 @@
 # is left untouched and reported as a quantified, loud "STUCK: ... N commits behind
 # ... - needs attention" warning rather than a quiet drift. Nothing is ever forced,
 # stashed, or discarded.
-# Still skips (benignly) local-only/no-origin projects, missing remotes/branches,
-# and fetch failures.
+# Still skips (benignly) no-origin projects, missing remotes/branches, and fetch
+# failures.
 # Pruning never deletes the checked-out branch or a branch that still has a
 # worktree, so it cannot discard unlanded work; set FM_FLEET_PRUNE=0 to disable it.
 # Usage: fm-fleet-sync.sh [<project-dir>]
@@ -153,12 +153,6 @@ sync_project() {
   fi
   if ! git -C "$PROJ" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
     echo "$label: skipped: not a git repo"
-    return 0
-  fi
-  mode_line=$("$FM_ROOT/bin/fm-project-mode.sh" "$label" 2>/dev/null || echo "no-mistakes off")
-  mode=${mode_line%% *}
-  if [ "$mode" = "local-only" ]; then
-    echo "$label: skipped: local-only project"
     return 0
   fi
   if ! git -C "$PROJ" remote get-url origin >/dev/null 2>&1; then

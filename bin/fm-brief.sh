@@ -11,8 +11,6 @@
 # (data/projects.md via fm-project-mode.sh; see AGENTS.md sections 6-7):
 #   no-mistakes  implement -> /no-mistakes pipeline -> PR -> captain merge (default)
 #   direct-PR    implement -> push + open PR via gh-axi (no pipeline) -> captain merge
-#   local-only   implement on branch, stop and report "ready in branch" (no push/PR);
-#                firstmate reviews, captain approves, firstmate merges to local main
 # Scout tasks ignore mode - their deliverable is a report, not a merge.
 # Ship briefs begin with a worktree-isolation assertion before the branch step.
 # Ship tasks include a project-memory section so durable project-intrinsic
@@ -156,10 +154,7 @@ exit 0
 fi
 
 # Ship task: shape Setup / Rule 1 / Definition of done by the project's delivery mode.
-# yolo does not affect the brief (it governs firstmate's approval behaviour), so discard it.
-read -r MODE _ <<EOF
-$("$FM_ROOT/bin/fm-project-mode.sh" "$REPO")
-EOF
+MODE=$("$FM_ROOT/bin/fm-project-mode.sh" "$REPO")
 
 case "$MODE" in
   direct-PR)
@@ -171,19 +166,6 @@ This project ships **direct-PR**: you raise the PR yourself, without the no-mist
 The task is complete only when committed on your branch.
 When it is implemented and committed, push your branch and open a PR with \`gh-axi\`, then append \`done: PR {url}\` to the status file and stop.
 Do NOT run /no-mistakes. The captain reviews and merges the PR; firstmate relays it.
-EOF
-)
-    ;;
-  local-only)
-    SETUP2=""
-    RULE1="1. Never push to any remote and never open a PR. Work only on your \`fm/$ID\` branch; firstmate handles the merge into local \`main\`."
-    DOD=$(cat <<EOF
-# Definition of done
-This project ships **local-only**: no remote, no PR, no pipeline.
-The task is complete only when committed on your branch \`fm/$ID\`. Do NOT push, do NOT open a PR, do NOT merge.
-Keep your branch a clean fast-forward onto the current default branch - if \`main\` has advanced, rebase onto it so the eventual merge stays a fast-forward.
-When it is implemented and committed, append \`done: ready in branch fm/$ID\` to the status file and stop.
-Firstmate then reviews your branch diff, the captain approves, and firstmate merges it into local \`main\`.
 EOF
 )
     ;;

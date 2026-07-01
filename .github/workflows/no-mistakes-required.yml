@@ -42,7 +42,7 @@ jobs:
             echo
             echo "    $marker"
             echo
-            echo "See CONTRIBUTING.md for setup and the full workflow."
+            echo "See README.md and AGENTS.md for the workflow."
             echo
             echo "PR author: ${PR_AUTHOR}"
           } >&2

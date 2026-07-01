@@ -2,21 +2,13 @@
 # shellcheck disable=SC2030,SC2031  # PATH/env exported into subshells per case is intentional
 # Tests for bin/fm-teardown.sh's unpushed-work safety check on the herdr backend.
 #
-# Covers the local-only fork-remote fix: a local-only-registered project whose
-# task pushes its work to a fork (upstream-contribution PRs) must be teardown-
-# eligible because a fork IS a remote. The pre-fix code short-circuited to a
-# strict local-main check and false-refused legitimate fork-pushed work.
-#
 # Matrix:
-#   (a) local-only + HEAD on a fork remote-tracking branch     -> ALLOW  (the fix)
-#   (b) local-only + truly unpushed work (no remote, not main) -> REFUSE (safety)
-#   (c) local-only + merged into local main, no remote         -> ALLOW  (no regression)
-#   (d) no-mistakes  + HEAD on origin remote-tracking branch   -> ALLOW  (no regression)
-#   (e) no-mistakes  + truly unpushed work                     -> REFUSE (no regression)
-#   (f) local-only + truly unpushed + --force                  -> ALLOW  (escape hatch)
-#   (g) no-mistakes + local HEAD ancestor of merged PR head     -> ALLOW  (#149 lagging local)
-#   (h) no-mistakes + replayed unpushed patch in merged PR head -> ALLOW  (#149 replayed local)
-#   (i) fm-pr-check when local HEAD lags                        -> record remote PR head (#149)
+#   (a) no-mistakes + HEAD on origin remote-tracking branch    -> ALLOW  (no regression)
+#   (b) no-mistakes + truly unpushed work                      -> REFUSE (no regression)
+#   (c) no-mistakes + truly unpushed + --force                 -> ALLOW  (escape hatch)
+#   (d) no-mistakes + local HEAD ancestor of merged PR head    -> ALLOW  (#149 lagging local)
+#   (e) no-mistakes + replayed unpushed patch in merged PR head -> ALLOW (#149 replayed local)
+#   (f) fm-pr-check when local HEAD lags                       -> record remote PR head (#149)
 #
 # The post-check teardown steps reach herdr only through bin/fm-backend.sh kill, which
 # runs `herdr worktree remove`; a stub `herdr` on PATH makes those steps no-ops so the
@@ -240,21 +232,6 @@ SH
   chmod +x "$case_dir/fakebin/gh-axi" "$case_dir/fakebin/gh"
 }
 
-# Drop a fake compatible tasks-axi (reports 0.1.1) into the case fakebin so the
-# teardown reminder routes through tasks-axi verbs instead of the hand-edit text.
-# Args: case_dir
-add_compatible_tasks_axi() {
-  local case_dir=$1
-  cat > "$case_dir/fakebin/tasks-axi" <<'SH'
-#!/usr/bin/env bash
-if [ "${1:-}" = --version ]; then
-  printf '%s\n' '0.1.1'
-fi
-exit 0
-SH
-  chmod +x "$case_dir/fakebin/tasks-axi"
-}
-
 # Run teardown with PATH mocking. Args: case_dir [extra args...]
 run_teardown() {
   local case_dir=$1; shift
@@ -269,62 +246,6 @@ run_teardown() {
 expect_code() {
   local expected=$1 actual=$2 label=$3
   [ "$actual" = "$expected" ] || fail "$label: expected exit $expected, got $actual"
-}
-
-test_local_only_fork_remote_allows() {
-  local case_dir rc
-  case_dir=$(make_case fork-allow)
-  write_meta "$case_dir" local-only ship
-  wt_commit "$case_dir" "fix the thing"
-  add_fork_with_pushed_branch "$case_dir"
-
-  set +e
-  run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
-  rc=$?
-  set -e
-
-  expect_code 0 "$rc" "fork-allow: teardown should succeed when HEAD is on a fork remote"
-  ! grep -q REFUSED "$case_dir/stderr" || fail "fork-allow: teardown printed a REFUSED line"
-  pass "local-only worktree with HEAD on a fork remote is torn down (fix holds)"
-}
-
-test_local_only_truly_unpushed_refuses() {
-  local case_dir rc
-  case_dir=$(make_case truly-unpushed)
-  write_meta "$case_dir" local-only ship
-  wt_commit "$case_dir" "unpushed work"
-  # No fork, no push to origin, not merged into main.
-
-  set +e
-  run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
-  rc=$?
-  set -e
-
-  expect_code 1 "$rc" "truly-unpushed: teardown should refuse"
-  grep -q REFUSED "$case_dir/stderr" || fail "truly-unpushed: no REFUSED line in stderr"
-  pass "local-only worktree with truly unpushed work is refused (safety preserved)"
-}
-
-test_local_only_merged_to_local_main_allows() {
-  local case_dir rc
-  case_dir=$(make_case merged-main)
-  write_meta "$case_dir" local-only ship
-  wt_commit "$case_dir" "merged work"
-  # Fast-forward the project's main to the worktree's HEAD commit so HEAD is
-  # reachable from main. update-ref works whether or not main is checked out,
-  # and the worktree shares the project's object db so the commit is visible.
-  local wt_head
-  wt_head=$(git -C "$case_dir/wt" rev-parse HEAD)
-  git -C "$case_dir/project" update-ref refs/heads/main "$wt_head"
-
-  set +e
-  run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
-  rc=$?
-  set -e
-
-  expect_code 0 "$rc" "merged-main: teardown should succeed when work is merged into local main"
-  ! grep -q REFUSED "$case_dir/stderr" || fail "merged-main: teardown printed a REFUSED line"
-  pass "local-only worktree with work merged into local main is torn down (no regression)"
 }
 
 test_no_mistakes_origin_remote_allows() {
@@ -498,10 +419,10 @@ test_gh_error_content_absent_refuses() {
   pass "no-mistakes work with a gh error and no content in default is refused (fail-safe)"
 }
 
-test_local_only_force_overrides_unpushed() {
+test_force_overrides_unpushed() {
   local case_dir rc
   case_dir=$(make_case force-override)
-  write_meta "$case_dir" local-only ship
+  write_meta "$case_dir" no-mistakes ship
   wt_commit "$case_dir" "unpushed work"
 
   set +e
@@ -511,13 +432,11 @@ test_local_only_force_overrides_unpushed() {
 
   expect_code 0 "$rc" "force-override: --force should bypass the unpushed-work check"
   ! grep -q REFUSED "$case_dir/stderr" || fail "force-override: REFUSED printed despite --force"
-  pass "local-only worktree with unpushed work is torn down under --force (escape hatch)"
+  pass "worktree with unpushed work is torn down under --force (escape hatch)"
 }
 
-# When a compatible tasks-axi is on PATH, the teardown reminder routes through its
-# verbs (tasks-axi done ... / tasks-axi ready) instead of the manual hand-edit text,
-# and drops the manual "keep Done to the 10 most recent" pruning (tasks-axi auto-prunes).
-test_teardown_prompts_tasks_axi_done_when_compatible() {
+# The teardown reminder routes backlog refresh through tasks-axi verbs.
+test_teardown_prompts_tasks_axi_done() {
   local case_dir out rc
   case_dir=$(make_case tasks-axi-reminder)
   write_meta "$case_dir" no-mistakes ship
@@ -527,14 +446,13 @@ test_teardown_prompts_tasks_axi_done_when_compatible() {
   # runs to the final reminder.
   git -C "$case_dir/wt" push -q origin fm/task-x1
   git -C "$case_dir/project" fetch -q origin
-  add_compatible_tasks_axi "$case_dir"
 
   set +e
   out=$(run_teardown "$case_dir" 2> "$case_dir/stderr")
   rc=$?
   set -e
 
-  expect_code 0 "$rc" "tasks-axi-reminder: teardown should succeed with compatible tasks-axi"
+  expect_code 0 "$rc" "tasks-axi-reminder: teardown should succeed"
   printf '%s\n' "$out" | grep -F 'tasks-axi done task-x1 --pr https://github.com/example/repo/pull/7' >/dev/null \
     || fail "tasks-axi-reminder: teardown did not prompt tasks-axi done: $out"
   printf '%s\n' "$out" | grep -F 'tasks-axi ready' >/dev/null \
@@ -542,35 +460,11 @@ test_teardown_prompts_tasks_axi_done_when_compatible() {
   printf '%s\n' "$out" | grep -F 'check date gates' >/dev/null \
     || fail "tasks-axi-reminder: teardown dropped the date-gate check: $out"
   if printf '%s\n' "$out" | grep -F 'keep Done to the 10 most recent' >/dev/null; then
-    fail "tasks-axi-reminder: kept manual Done pruning in compatible tasks-axi prompt: $out"
+    fail "tasks-axi-reminder: kept manual Done pruning in tasks-axi prompt: $out"
   fi
-  pass "teardown prompts tasks-axi backlog refresh when compatible"
+  pass "teardown prompts tasks-axi backlog refresh"
 }
 
-# #145: config/backlog-backend=manual forces the hand-edit reminder even when a
-# compatible tasks-axi is on PATH (the home opted out of the default backend).
-test_teardown_manual_backend_prompts_hand_edit_even_when_tasks_axi_present() {
-  local case_dir out
-  case_dir=$(make_case tasks-axi-manual-optout)
-  write_meta "$case_dir" no-mistakes ship
-  printf '%s\n' 'pr=https://github.com/example/repo/pull/7' >> "$case_dir/state/task-x1.meta"
-  printf '%s\n' manual > "$case_dir/config/backlog-backend"
-  add_compatible_tasks_axi "$case_dir"
-
-  # stderr to the case file: a local run on a feature branch prints fm-guard's
-  # tangle banner (FM_ROOT=$ROOT), irrelevant to the reminder text this asserts.
-  out=$(run_teardown "$case_dir" 2> "$case_dir/stderr") || fail "teardown failed with manual backlog backend"
-  printf '%s\n' "$out" | grep -F 'Update data/backlog.md - move task-x1 to Done' >/dev/null \
-    || fail "teardown did not prompt manual backlog update under opt-out: $out"
-  if printf '%s\n' "$out" | grep -F 'tasks-axi done' >/dev/null; then
-    fail "teardown prompted tasks-axi despite manual backend opt-out: $out"
-  fi
-  pass "teardown honors config/backlog-backend=manual even when tasks-axi is compatible"
-}
-
-test_local_only_fork_remote_allows
-test_local_only_truly_unpushed_refuses
-test_local_only_merged_to_local_main_allows
 test_no_mistakes_origin_remote_allows
 test_no_mistakes_truly_unpushed_refuses
 test_squash_merged_branch_deleted_allows
@@ -579,6 +473,5 @@ test_squash_merged_pr_allows_replayed_unpushed_patch
 test_pr_check_records_remote_head_when_local_lags
 test_content_in_default_allows
 test_gh_error_content_absent_refuses
-test_local_only_force_overrides_unpushed
-test_teardown_prompts_tasks_axi_done_when_compatible
-test_teardown_manual_backend_prompts_hand_edit_even_when_tasks_axi_present
+test_force_overrides_unpushed
+test_teardown_prompts_tasks_axi_done

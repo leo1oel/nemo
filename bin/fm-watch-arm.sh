@@ -59,6 +59,22 @@ watch_lock_matches_pid() {
   [ "$current_identity" = "$lock_identity" ]
 }
 
+watch_lock_names_pid() {
+  local pid=$1 lock_home lock_path lock_pid
+  lock_home=$(cat "$WATCH_LOCK/fm-home" 2>/dev/null || true)
+  lock_path=$(cat "$WATCH_LOCK/watcher-path" 2>/dev/null || true)
+  lock_pid=$(cat "$WATCH_LOCK/pid" 2>/dev/null || true)
+  [ "$lock_home" = "$FM_HOME" ] || return 1
+  [ "$lock_path" = "$WATCH" ] || return 1
+  [ "$lock_pid" = "$pid" ] || return 1
+}
+
+fresh_beacon() {
+  local age
+  age=$(fm_path_age "$BEAT")
+  [ "$age" -lt "$GRACE" ]
+}
+
 clear_stale_recorded_watcher_lock() {
   local lock_home lock_path lock_identity
   lock_home=$(cat "$WATCH_LOCK/fm-home" 2>/dev/null || true)
@@ -81,11 +97,19 @@ healthy_watcher() {
   HEALTHY_PID=
   pid=$(cat "$WATCH_LOCK/pid" 2>/dev/null || true)
   fm_pid_alive "$pid" || return 1
-  watch_lock_matches_pid "$pid" || return 1
-  age=$(fm_path_age "$BEAT")
-  [ "$age" -lt "$GRACE" ] || return 1
-  HEALTHY_PID=$pid
-  return 0
+  if watch_lock_matches_pid "$pid" && fresh_beacon; then
+    HEALTHY_PID=$pid
+    return 0
+  fi
+  # Some sandboxed environments deny `ps`, so fm_pid_identity cannot be read and
+  # the watcher lock has no identity. For an arm/no-op health report, a live pid
+  # plus matching home/path and a fresh beacon is enough to avoid spawning a
+  # duplicate. Restart still uses watch_lock_matches_pid before signaling.
+  if watch_lock_names_pid "$pid" && fresh_beacon; then
+    HEALTHY_PID=$pid
+    return 0
+  fi
+  return 1
 }
 
 report_healthy() {
@@ -183,6 +207,14 @@ while :; do
     wait "$child" 2>/dev/null || true
     rm -f "$child_out" 2>/dev/null || true
     exit 0
+  fi
+  if fm_pid_alive "$child" && watch_lock_names_pid "$child" && fresh_beacon; then
+    echo "watcher: started pid=$child (beacon fresh)"
+    wait "$child"
+    rc=$?
+    print_watch_output "$child_out"
+    rm -f "$child_out" 2>/dev/null || true
+    exit "$rc"
   fi
   if [ "$child_done" -eq 0 ] && ! fm_pid_alive "$child"; then
     wait "$child"

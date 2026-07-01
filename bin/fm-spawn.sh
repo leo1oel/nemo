@@ -26,9 +26,9 @@
 # The Claude turn-end hook (a Stop hook in the worktree's .claude/settings.local.json) is
 # installed automatically for crewmate tasks; secondmates run their own watcher in their
 # home and are supervised through status writes, not pane-idle staleness, so they get none.
-# On success prints: spawned <id> harness=<name> kind=<ship|scout|secondmate> mode=<mode> yolo=<on|off> handle=<pane> worktree=<path>
-# mode/yolo are resolved per-project from data/projects.md for ship/scout tasks; a secondmate
-# spawn records mode=secondmate, yolo=off, home=, home_workspace=, and projects=.
+# On success prints: spawned <id> harness=<name> kind=<ship|scout|secondmate> mode=<mode> handle=<pane> worktree=<path>
+# mode is resolved per-project from data/projects.md for ship/scout tasks; a secondmate
+# spawn records mode=secondmate, home=, home_workspace=, and projects=.
 set -eu
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -449,7 +449,6 @@ if [ "$KIND" = secondmate ]; then
   fi
 
   MODE=secondmate
-  YOLO=off
   SECONDMATE_PROJECTS=$(secondmate_registry_value "$ID" projects || true)
 
   # The secondmate runs as a firstmate in its own home: point its operational env at the
@@ -476,14 +475,13 @@ if [ "$KIND" = secondmate ]; then
     echo "harness=$HARNESS"
     echo "kind=$KIND"
     echo "mode=$MODE"
-    echo "yolo=$YOLO"
     echo "tasktmp=$TASK_TMP"
     echo "home=$HOME_PATH"
     echo "home_workspace=$WS"
     echo "projects=$SECONDMATE_PROJECTS"
   } > "$STATE/$ID.meta"
 
-  echo "spawned $ID harness=$HARNESS kind=$KIND mode=$MODE yolo=$YOLO handle=$HANDLE worktree=$HOME_PATH"
+  echo "spawned $ID harness=$HARNESS kind=$KIND mode=$MODE handle=$HANDLE worktree=$HOME_PATH"
   exit 0
 fi
 
@@ -555,14 +553,11 @@ EOF
     ;;
 esac
 
-# Per-project delivery mode + yolo flag (bin/fm-project-mode.sh; AGENTS.md sections 6-7).
-# Recorded in meta so fm-teardown's safety check and the validate/merge stages can
-# branch on them. Mode governs ship tasks; a scout's deliverable is a report, not a
-# merge, so scout teardown ignores mode.
+# Per-project delivery mode (bin/fm-project-mode.sh; AGENTS.md sections 6-7).
+# Recorded in meta so validation and teardown can branch on it. Mode governs ship
+# tasks; a scout's deliverable is a report, not a merge, so scout teardown ignores mode.
 PROJ_NAME=$(basename "$PROJ_ABS")
-read -r MODE YOLO <<EOF
-$("$FM_ROOT/bin/fm-project-mode.sh" "$PROJ_NAME")
-EOF
+MODE=$("$FM_ROOT/bin/fm-project-mode.sh" "$PROJ_NAME")
 
 LAUNCH=${LAUNCH//__BRIEF__/$BRIEF}
 
@@ -585,8 +580,7 @@ mkdir -p "$STATE"
   echo "harness=$HARNESS"
   echo "kind=$KIND"
   echo "mode=$MODE"
-  echo "yolo=$YOLO"
   echo "tasktmp=$TASK_TMP"
 } > "$STATE/$ID.meta"
 
-echo "spawned $ID harness=$HARNESS kind=$KIND mode=$MODE yolo=$YOLO handle=$HANDLE worktree=$WT"
+echo "spawned $ID harness=$HARNESS kind=$KIND mode=$MODE handle=$HANDLE worktree=$WT"

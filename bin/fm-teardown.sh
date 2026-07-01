@@ -13,9 +13,7 @@
 # the default branch.
 # A gh lookup error falls back to the content check; if that is also inconclusive,
 # teardown refuses rather than risk discarding unlanded work. Uncommitted changes are
-# never landed. local-only projects additionally accept work merged into the local
-# default branch (firstmate performs that merge on the captain's approval) as a
-# fallback for the common case where there is no remote at all.
+# never landed.
 # Scout tasks (kind=scout in meta) carve out of that check: their worktree is
 # declared scratch and the report at data/<task-id>/report.md is the work
 # product - teardown proceeds once the report exists, and refuses without it.
@@ -41,8 +39,6 @@ CONFIG="${FM_CONFIG_OVERRIDE:-$FM_HOME/config}"
 SECONDMATE_REG="$DATA/secondmates.md"
 SUB_HOME_MARKER=".fm-secondmate-home"
 SUB_HOME_WS_MARKER=".fm-secondmate-home.workspace"
-# shellcheck source=bin/fm-tasks-axi-lib.sh
-. "$SCRIPT_DIR/fm-tasks-axi-lib.sh"
 "$FM_ROOT/bin/fm-guard.sh" || true
 ID=$1
 FORCE=${2:-}
@@ -227,48 +223,34 @@ work_is_landed() {
   content_in_default
 }
 
-# Emit the post-teardown backlog-refresh reminder. When the default tasks-axi
-# backend is active for this home (config/backlog-backend not "manual") AND a
-# compatible tasks-axi (0.1.1+) is on PATH, prompt the matching `tasks-axi done`
-# verb (which also auto-prunes/archives Done) plus `tasks-axi ready`; otherwise
-# fall back to the hand-edit reminder. The secondmate retirement case keeps its
-# data/secondmates.md hint, which the verb path does not cover. Mirrors AGENTS.md
-# section 10.
+# Emit the post-teardown backlog-refresh reminder. tasks-axi is provided by the
+# environment and is the only backlog mutation path. The secondmate retirement
+# case keeps its data/secondmates.md hint, which tasks-axi does not cover.
+# Mirrors AGENTS.md section 10.
 backlog_refresh_reminder() {
   local pr done_cmd report_path
-  if fm_tasks_axi_backend_available "$CONFIG"; then
-    case "$KIND" in
-      scout)
-        report_path="data/$ID/report.md"
-        done_cmd="tasks-axi done $ID --report $report_path"
-        ;;
-      secondmate)
-        done_cmd="tasks-axi done $ID --note \"retired\""
-        ;;
-      *)
-        if [ "$MODE" = local-only ]; then
-          done_cmd="tasks-axi done $ID --note \"local main\""
-        else
-          pr=$PR_URL
-          if [ -n "$pr" ]; then
-            done_cmd="tasks-axi done $ID --pr $pr"
-          else
-            done_cmd="tasks-axi done $ID --pr PR_URL"
-          fi
-        fi
-        ;;
-    esac
-    if [ "$KIND" = secondmate ]; then
-      printf '%s\n' "🌱 Backlog: secondmate $ID retired. Run $done_cmd, update data/secondmates.md as needed, then run tasks-axi ready for dependency-cleared candidates, check date gates, and dispatch only work whose blockers are gone and date is due."
-    else
-      printf '%s\n' "🌱 Backlog: $ID just finished. Run $done_cmd, then run tasks-axi ready for dependency-cleared candidates, check date gates, and dispatch only work whose blockers are gone and date is due."
-    fi
+  case "$KIND" in
+    scout)
+      report_path="data/$ID/report.md"
+      done_cmd="tasks-axi done $ID --report $report_path"
+      ;;
+    secondmate)
+      done_cmd="tasks-axi done $ID --note \"retired\""
+      ;;
+    *)
+      pr=$PR_URL
+      if [ -n "$pr" ]; then
+        done_cmd="tasks-axi done $ID --pr $pr"
+      else
+        done_cmd="tasks-axi done $ID --pr PR_URL"
+      fi
+      ;;
+  esac
+
+  if [ "$KIND" = secondmate ]; then
+    printf '%s\n' "🌱 Backlog: secondmate $ID retired. Run $done_cmd, update data/secondmates.md as needed, then run tasks-axi ready for dependency-cleared candidates, check date gates, and dispatch only work whose blockers are gone and date is due."
   else
-    if [ "$KIND" = secondmate ]; then
-      printf '%s\n' "🌱 Backlog: secondmate $ID retired. Update data/backlog.md and data/secondmates.md as needed, then re-scan Queued for items now unblocked or now time-due and dispatch what's ready."
-    else
-      printf '%s\n' "🌱 Backlog: $ID just finished. Update data/backlog.md - move $ID to Done (keep Done to the 10 most recent), then re-scan Queued for items now unblocked (a \"blocked-by: $ID\" may have just cleared) or now time-due, and dispatch what's ready."
-    fi
+    printf '%s\n' "🌱 Backlog: $ID just finished. Run $done_cmd, then run tasks-axi ready for dependency-cleared candidates, check date gates, and dispatch only work whose blockers are gone and date is due."
   fi
 }
 
@@ -536,21 +518,7 @@ if [ "$KIND" != secondmate ] && [ -d "$WT" ] && [ "$FORCE" != "--force" ]; then
     # while being fully landed. We therefore treat reachability as a fast accept, not
     # the sole verdict, and fall through to a landed-work check before refusing.
     unpushed=$(git -C "$WT" log --oneline HEAD --not --remotes -- 2>/dev/null | head -5 || true)
-    if [ -n "$unpushed" ] && [ "$MODE" = local-only ]; then
-      # local-only ships have no remote in the common case, so the "on a remote"
-      # test above is expected to be non-empty. The work is safe once it is merged
-      # into the local default branch (firstmate does that merge on the captain's
-      # approval). Refuse until then.
-      DEFAULT=$(default_branch) || { echo "REFUSED: cannot determine default branch for $PROJ; expected origin/HEAD, main, or master." >&2; exit 1; }
-      unmerged=$(git -C "$WT" log --oneline HEAD --not "$DEFAULT" -- 2>/dev/null | head -5 || true)
-      if [ -n "$dirty" ] || [ -n "$unmerged" ]; then
-        echo "REFUSED: local-only worktree $WT has work not yet merged into $DEFAULT and not on any remote." >&2
-        [ -n "$dirty" ] && echo "uncommitted changes present" >&2
-        [ -n "$unmerged" ] && printf 'commits not yet on %s:\n%s\n' "$DEFAULT" "$unmerged" >&2
-        echo "Merge the branch into local $DEFAULT first (bin/fm-merge-local.sh after the captain approves), or push to a fork/remote, or get the captain's explicit OK to discard, then --force." >&2
-        exit 1
-      fi
-    elif [ -n "$dirty" ]; then
+    if [ -n "$dirty" ]; then
       # Uncommitted changes are never landed and the reset would discard them; always
       # refuse, regardless of whether the committed work itself has landed.
       echo "REFUSED: worktree $WT has uncommitted changes." >&2
@@ -599,7 +567,7 @@ git -C "$PROJ" branch -D "fm-$ID" >/dev/null 2>&1 || true
 # Empty (pre-fix tasks without tasktmp=) is a no-op.
 [ -n "$TASK_TMP" ] && rm -rf "$TASK_TMP"
 rm -f "$STATE/$ID.status" "$STATE/$ID.turn-ended" "$STATE/$ID.check.sh" "$STATE/$ID.meta"
-if [ "$KIND" != scout ] && [ "$MODE" != local-only ]; then
+if [ "$KIND" != scout ]; then
   "$FM_ROOT/bin/fm-fleet-sync.sh" "$PROJ" || true
 fi
 echo "teardown $ID complete (handle $HANDLE, worktree $WT)"

@@ -20,7 +20,6 @@ Use this reference when creating or seeding a secondmate, registering its route,
 
 The `scope:` field is used during intake; the `projects:` field is a non-exclusive clone list, not ownership.
 Route by the nature of the task against each registered `scope:`, not just the project name; a project may appear in several clone lists.
-If the resolved project is `local-only`, keep the work with the main firstmate even when a secondmate scope sounds relevant.
 
 ## Seeding a home
 
@@ -33,7 +32,7 @@ A secondmate home is an isolated firstmate home.
 The charter must be filled before seeding; direct seed without a preexisting brief requires `FM_SECONDMATE_CHARTER`.
 Seeding is transactional: if validation, cloning, no-mistakes initialization, or registry update fails, generated briefs, new homes, new project clones, and registry edits are rolled back.
 `bin/fm-home-seed.sh validate` refuses duplicate ids, duplicate homes, and nested or overlapping homes.
-Secondmate project lists may include `no-mistakes` and `direct-PR` projects only; `local-only` projects stay with the main firstmate.
+Secondmate project lists may include `no-mistakes` and `direct-PR` projects.
 For `no-mistakes` projects, seeding initializes only projects newly cloned into a secondmate home and refuses to mutate a preexisting clone that is not already initialized.
 
 Scaffold the charter with `bin/fm-brief.sh <id> --secondmate <project>...` (set `FM_SECONDMATE_CHARTER` / `FM_SECONDMATE_SCOPE`), then seed, then launch with `bin/fm-spawn.sh <id> --secondmate`.
@@ -60,7 +59,6 @@ Scope-matching is firstmate's judgment against the secondmate's natural-language
 The helper resolves the secondmate home from `data/secondmates.md` and mechanically moves each named item from the main `data/backlog.md` into the secondmate home's `data/backlog.md`, preserving the line and its section, so the item is neither duplicated nor lost.
 It refuses `## In flight` entries because active task ownership also lives in herdr and `state/`.
 It is idempotent (an item already in the secondmate backlog is skipped) and refuses any destination that is not a genuine seeded firstmate home with safe operational directories and a matching `.fm-secondmate-home` marker, so a move can never land in a project.
-Do not hand off `local-only` items: that work stays with the main firstmate.
 
 ## Recovery and teardown
 

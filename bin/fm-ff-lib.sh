@@ -1,18 +1,14 @@
 # shellcheck shell=bash
 # These globals are this library's output contract - set here, read by the
-# sourcing scripts (fm-update.sh, fm-spawn.sh) - so shellcheck cannot see their
+# sourcing script (fm-spawn.sh) - so shellcheck cannot see their
 # use within this file.
 # shellcheck disable=SC2034
-# Shared fast-forward machinery for firstmate self-sync.
+# Shared fast-forward machinery for the spawn-time secondmate sync.
 # Usage: . bin/fm-ff-lib.sh   (after FM_ROOT and FM_HOME are set)
 #
-# This is the one implementation of "advance a firstmate checkout to a base by a
-# clean fast-forward, never forcing, merging, or stashing" used by every sync
-# path:
-#   - /updatefirstmate (bin/fm-update.sh) pulls from origin: base_mode "origin".
-#   - the local-HEAD secondmate sync (bin/fm-spawn.sh before a secondmate launch)
-#     follows the PRIMARY checkout's current default-branch commit: base_mode is
-#     that local commit, with NO fetch and no origin dependency.
+# This advances a secondmate home to the primary checkout's current
+# default-branch commit by a clean fast-forward, never forcing, merging, or
+# stashing. The base is a LOCAL commit with NO fetch and no origin dependency.
 #
 # On the herdr backend every secondmate home is a herdr worktree of this same
 # repo, checked out on its own lease branch `secondmate-<id>`, so it already holds
@@ -242,14 +238,10 @@ dirty_status() {
 #   FF_STATUS = updated|current|skipped
 #   FF_INSTR  = comma list of changed instruction paths (only when updated)
 #
-# base_mode selects where the fast-forward base comes from:
-#   origin       - fetch origin and advance to origin/<default> (the /updatefirstmate
-#                  path); requires an origin remote and network reachability.
-#   <commit-ish> - advance to that LOCAL commit with NO fetch and no origin
-#                  dependency (the local-HEAD secondmate sync). The commit must
-#                  already exist in the target's object store, which it always does
-#                  for a herdr worktree of this same repo; a standalone clone that
-#                  lacks it is skipped rather than fetched.
+# base_commit is a LOCAL commit with NO fetch and no origin dependency. The
+# commit must already exist in the target's object store, which it always does
+# for a herdr worktree of this same repo; a standalone clone that lacks it is
+# skipped rather than fetched.
 # The target may be on the default branch, on a lease branch (a herdr secondmate
 # home's `secondmate-<id>`, passed as lease_branch), or - when allow_detached=yes
 # - at a detached HEAD; in every case the fast-forward advances only that

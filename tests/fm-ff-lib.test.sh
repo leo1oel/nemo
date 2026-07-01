@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
-# Behavior tests for bin/fm-ff-lib.sh's local-HEAD fast-forward path (the #91
-# secondmate sync to the primary checkout's HEAD). The origin base_mode is already
-# covered end-to-end by tests/fm-update.test.sh; here we pin the LOCAL base_mode:
+# Behavior tests for bin/fm-ff-lib.sh's local-HEAD fast-forward path: the
+# secondmate sync to the primary checkout's HEAD.
 #   - primary_head_commit reads the default-branch ref (not HEAD), so a tangled
 #     primary still yields the true default tip.
 #   - ff_target with a commit base advances a behind home, no fetch, no origin.

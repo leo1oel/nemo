@@ -3,7 +3,7 @@
 #
 # Pooled project clones do not keep their local default branch current, so this
 # helper compares remote-backed projects against origin/<default> after fetching
-# the default branch, and local-only projects against the local default branch.
+# the default branch.
 # Usage: fm-review-diff.sh <task-id> [--stat]
 #   --stat prints only the stat summary; default prints stat summary plus full diff.
 set -eu

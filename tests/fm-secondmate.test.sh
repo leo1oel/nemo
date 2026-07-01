@@ -204,7 +204,6 @@ test_spawn_secondmate() {
   [ -f "$meta" ] || fail "no meta written for secondmate"
   grep -q '^kind=secondmate$' "$meta" || fail "meta kind not secondmate"
   grep -q '^mode=secondmate$' "$meta" || fail "meta mode not secondmate"
-  grep -q '^yolo=off$' "$meta" || fail "meta yolo not off"
   grep -q '^home=' "$meta" || fail "meta missing home="
   grep -q '^home_workspace=ws-' "$meta" || fail "meta missing home_workspace="
   grep -q '^projects=widget$' "$meta" || fail "meta projects not recorded"

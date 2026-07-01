@@ -35,7 +35,7 @@ batched digest rather than per-wake injections.
    (captain) pane so it inherits `HERDR_PANE_ID` — that is the supervisor pane it
    injects digests back into. Override with `FM_SUPERVISOR_TARGET=<pane-id>`.
 
-3. **Do not separately arm `fm-watch.sh`.** The daemon manages the watcher as
+3. **Do not separately arm the watcher.** The daemon manages the watcher as
    its child; the singleton lock no-ops a stray arm harmlessly. While `state/.afk`
    exists the watcher reverts to one-shot and surfaces every wake for the daemon to
    classify, so the daemon and the always-on watcher never run their triage at the
@@ -57,7 +57,7 @@ No `/back` is needed. The first genuine message is the return signal:
   distilled "while you were out" catch-up (drain `state/.wake-queue`, summarize
   any pending escalations from `state/.subsuper-escalations` and any
   `state/.subsuper-inject-wedged` marker), and resume full per-wake
-  responsiveness (arm `bin/fm-watch.sh`).
+  responsiveness (arm `bin/fm-watch-arm.sh`).
 - A message **with** the sentinel marker (`FM_INJECT_MARK`, ASCII 0x1f) → it
   is a daemon escalation; stay afk and process it.
 - Re-invoking `/afk` while already away → stay afk (refresh the flag); this

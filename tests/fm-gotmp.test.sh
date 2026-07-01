@@ -54,7 +54,7 @@ make_fake_root() {
 exit 0
 SH
   chmod +x "$fake/bin/fm-guard.sh"
-  # fm-fleet-sync.sh: stub (called for non-scout/non-local-only teardowns).
+  # fm-fleet-sync.sh: stub (called for non-scout teardowns).
   cat > "$fake/bin/fm-fleet-sync.sh" <<'SH'
 #!/usr/bin/env bash
 exit 0
@@ -66,11 +66,6 @@ SH
 exit 0
 SH
   chmod +x "$fake/bin/fm-backend.sh"
-  # fm-tasks-axi-lib.sh: stub (teardown sources it). Report not-compatible so
-  # backlog_refresh_reminder takes the plain-message path; no tasks-axi here.
-  cat > "$fake/bin/fm-tasks-axi-lib.sh" <<'SH'
-fm_tasks_axi_compatible() { return 1; }
-SH
   # Meta with a nonexistent worktree so the safety block skips; herdr handle=/workspace=.
   cat > "$fake/state/$id.meta" <<META
 handle=fakehandle-$id
@@ -80,7 +75,6 @@ project=$TMP_ROOT/nonexistent-project-$id
 harness=claude
 kind=ship
 mode=no-mistakes
-yolo=off
 tasktmp=$tasktmp
 META
   printf '%s' "$fake"
@@ -162,9 +156,6 @@ SH
 exit 0
 SH
   chmod +x "$fake/bin/fm-backend.sh"
-  cat > "$fake/bin/fm-tasks-axi-lib.sh" <<'SH'
-fm_tasks_axi_compatible() { return 1; }
-SH
   # No tasktmp= line at all.
   cat > "$fake/state/$id.meta" <<META
 handle=fakehandle-$id
@@ -174,7 +165,6 @@ project=$TMP_ROOT/nonexistent-proj-$id
 harness=claude
 kind=ship
 mode=no-mistakes
-yolo=off
 META
   bash "$fake/bin/fm-teardown.sh" "$id" >/dev/null 2>&1 \
     || fail "teardown exited non-zero when tasktmp= was absent"
