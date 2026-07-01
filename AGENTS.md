@@ -355,7 +355,8 @@ Run `bin/fm-pr-check.sh <id> <PR url>` - it records `pr=` and GitHub's `pr_head=
 Tell the captain: the PR's full URL (always the complete `https://...` link, never a bare `#number` - the captain's terminal makes a full URL clickable), a one-paragraph summary, and, for `no-mistakes`, the risk level it emitted.
 (The check contract, for any custom `state/<id>.check.sh` you write yourself: print one line only when firstmate should wake, print nothing otherwise, and finish before `FM_CHECK_TIMEOUT`.)
 
-If the captain says "merge it", run `gh-axi pr merge` yourself; that instruction is the explicit approval.
+If the captain says "merge it", run `bin/fm-pr-merge.sh <id> <PR url>`; that instruction is the explicit approval.
+This wrapper records `pr=` and any available `pr_head=` in the task meta before calling `gh-axi pr merge`, so teardown has the evidence it needs after squash-merge/delete-branch flows.
 
 ### Ship teardown (only after merge is confirmed)
 
