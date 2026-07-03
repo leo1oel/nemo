@@ -18,6 +18,11 @@ Do not hand-edit `data/backlog.md`.
 
 Personal preferences for one captain's fleet live locally in `data/captain.md`; it is gitignored and read after `data/projects.md` at session start.
 
+## Operational learnings (`data/learnings.md`)
+
+Fleet-local operational learnings (script sharp edges, harness quirks, recurring false alarms and their causes) live locally in `data/learnings.md`, gitignored, in the same dated, curated rewrite-and-prune style as `data/captain.md`.
+The `/stow` skill sweeps a session's uncaptured durable knowledge into it (and routes captain preferences, project-intrinsic facts, and backlog items to their own homes) so a session is safe to reset.
+
 ## Secondmate routes (`data/secondmates.md`)
 
 Persistent secondmate routes live locally in `data/secondmates.md`.
