@@ -14,6 +14,20 @@ The environment keeps `tasks-axi` installed and current.
 The first mate routes routine backlog mutations through `tasks-axi` verbs and keeps secondmate transfers behind `fm-backlog-handoff.sh` validation.
 Do not hand-edit `data/backlog.md`.
 
+## Crew dispatch profiles (`config/crew-dispatch.json`)
+
+Optional local dispatch rules choosing a per-task Claude model/effort profile (this fork is Claude-only, so there is no harness axis).
+The file holds natural-language `when` rules plus a `use` profile and an optional `default`; firstmate does the rule matching at intake and passes concrete `--model`/`--effort` flags to `fm-spawn.sh`.
+While the file exists and is valid JSON, `fm-spawn.sh` refuses template-launched crewmate/scout spawns without an explicit profile (the consultation backstop).
+Copy `docs/examples/crew-dispatch.json` into local `config/crew-dispatch.json` to start.
+The file is inherited into secondmate homes on every secondmate spawn and via `fm-config-push.sh` (`FM_INHERITABLE_CONFIG` in `fm-config-inherit-lib.sh` declares the inheritable set).
+
+## Secondmate launch profile (`config/secondmate-profile`)
+
+A single line `<model> [<effort>]` (either token may be `default`) pinning the profile for secondmate launches.
+Re-resolved on every secondmate spawn and respawn, so the pin is durable across recovery and restarts; explicit `--model`/`--effort` flags still win.
+Primary-only: deliberately never inherited into secondmate homes, because a secondmate never spawns secondmates.
+
 ## Captain preferences (`data/captain.md`)
 
 Personal preferences for one captain's fleet live locally in `data/captain.md`; it is gitignored and read after `data/projects.md` at session start.

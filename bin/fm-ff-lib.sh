@@ -185,6 +185,40 @@ validate_secondmate_home() {
   VALIDATED_HOME="$abs_home"
 }
 
+# secondmate_registry_field <registry> <id> <field>: read one field off a
+# secondmate's data/secondmates.md registry line. Supports: home.
+secondmate_registry_field() {
+  local registry=$1 id=$2 key=$3 line value
+  [ -f "$registry" ] || return 1
+  line=$(grep -E "^- $id( |$)" "$registry" | tail -1 || true)
+  [ -n "$line" ] || return 1
+  case "$key" in
+    home) value=$(printf '%s\n' "$line" | sed -n 's/^[^(]*(home: \([^;)]*\);.*/\1/p') ;;
+    *) return 1 ;;
+  esac
+  [ -n "$value" ] || return 1
+  printf '%s\n' "$value"
+}
+
+# live_secondmate_meta_records <state-dir> [<registry>]: one line per live
+# kind=secondmate meta record, as `id|home|handle|meta-path`. home= comes from
+# the meta, falling back to the registry for older or incomplete records.
+live_secondmate_meta_records() {
+  local state=$1 registry=${2:-} meta id home handle
+  [ -d "$state" ] || return 0
+  for meta in "$state"/*.meta; do
+    [ -f "$meta" ] || continue
+    grep -q '^kind=secondmate$' "$meta" 2>/dev/null || continue
+    id=$(basename "$meta" .meta)
+    home=$(grep '^home=' "$meta" 2>/dev/null | tail -1 | cut -d= -f2- || true)
+    if [ -z "$home" ] && [ -n "$registry" ]; then
+      home=$(secondmate_registry_field "$registry" "$id" home || true)
+    fi
+    handle=$(grep '^handle=' "$meta" 2>/dev/null | tail -1 | cut -d= -f2- || true)
+    printf '%s|%s|%s|%s\n' "$id" "$home" "$handle" "$meta"
+  done
+}
+
 # A single fetch refreshes every worktree that shares an object store, so fetch
 # each distinct git-common-dir at most once. Used ONLY by the origin base mode;
 # the local-HEAD sync never fetches.
