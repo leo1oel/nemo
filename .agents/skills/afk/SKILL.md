@@ -87,9 +87,12 @@ The daemon never injects into an in-use pane. Two checks run before every
 injection (the composer/submit logic is shared with `fm-send.sh` via
 `bin/fm-herdr-lib.sh`):
 
-- **`pane_is_busy`** — reads herdr's `agent_status` for the pane (caught live as
-  the reliable signal: it covers Claude's thinking phase, which the busy-footer
-  text alone misses). Footer regex is the fallback when the integration is absent.
+- **`pane_is_busy`** — reads herdr's `agent_status` for the pane (`working`
+  covers Claude's thinking phase, which the busy-footer text alone misses).
+  Any non-working verdict is corroborated against the pane's rendered footer:
+  `agent_status` reports generation state only, so a crew blocked on its own
+  long foreground tool call reads idle while the busy footer is still up. The
+  footer regex is also the fallback when the integration is absent.
 - **`pane_input_pending`** — reads Claude's composer line (herdr exposes no
   cursor position; the composer is not the last line — status footers render
   below it). The detector **strips Claude's composer box borders first**, so an

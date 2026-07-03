@@ -90,9 +90,14 @@ case "${1:-} ${2:-}" in
     printf '{"result":{"pane":{"pane_id":"%s","agent_status":"%s"}}}\n' "${3:-}" "$st" ;;
   "pane read")
     [ "${FM_FAKE_PANE_MISSING:-0}" = 1 ] && exit 1
-    # agent_status is the primary busy signal, so this footer render is only the
-    # fallback; emit a benign idle composer.
-    printf 'history line\n❯ \n  Opus 4.8 | Context 0%%\n' ;;
+    # Footer render: corroborates non-working agent_status verdicts and serves
+    # as the fallback when agent_status is unavailable. Busy variant models a
+    # crew mid-foreground-tool-call (agent_status idle, busy footer still up).
+    if [ "${FM_FAKE_PANE_FOOTER_BUSY:-0}" = 1 ]; then
+      printf 'history line\nRunning validation…\n  esc to interrupt\n'
+    else
+      printf 'history line\n❯ \n  Opus 4.8 | Context 0%%\n'
+    fi ;;
 esac
 exit 0
 SH
@@ -132,7 +137,8 @@ reset_fakes() {
   FM_FAKE_AXI_LIST=""
   FM_FAKE_BUSY=0
   FM_FAKE_PANE_MISSING=0
-  export FM_FAKE_AXI_STATUS FM_FAKE_AXI_STATUS_RUN FM_FAKE_AXI_LIST FM_FAKE_BUSY FM_FAKE_PANE_MISSING
+  FM_FAKE_PANE_FOOTER_BUSY=0
+  export FM_FAKE_AXI_STATUS FM_FAKE_AXI_STATUS_RUN FM_FAKE_AXI_LIST FM_FAKE_BUSY FM_FAKE_PANE_MISSING FM_FAKE_PANE_FOOTER_BUSY
 }
 
 # --- run-object fixtures (TOON, as `no-mistakes axi status` emits) -----------
@@ -497,6 +503,27 @@ test_no_run_idle_pane_uses_log() {
   pass "no run + idle pane uses the status-log verb"
 }
 
+# (g2) no run + agent_status idle BUT the pane still renders the busy footer
+# (a crew blocked on its own long foreground tool call, e.g. the synchronous
+# no-mistakes pipeline: agent_status reports generation state only) -> the
+# footer corroboration must win and read working, not fall to the status log.
+test_no_run_idle_status_busy_footer_is_working() {
+  reset_fakes
+  local d; d=$(new_case idle-busy-footer)
+  make_repo_on_branch "$d/wt" fm/feat-ibf
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/feat-ibf.meta" "handle=p1" "worktree=$d/wt" "kind=ship"
+  printf 'working: started validation\n' > "$d/state/feat-ibf.status"
+  FM_FAKE_AXI_STATUS=""
+  FM_FAKE_AXI_LIST=""
+  FM_FAKE_BUSY=0
+  FM_FAKE_PANE_FOOTER_BUSY=1
+  local out; out=$(run_crew_state "$d" feat-ibf)
+  assert_contains "$out" "state: working" "idle agent_status + busy footer -> working"
+  assert_contains "$out" "source: pane" "footer corroboration -> pane source"
+  pass "idle agent_status with a busy footer still reads working via the pane"
+}
+
 test_dead_pane_ignores_stale_status_log() {
   reset_fakes
   local d; d=$(new_case dead-pane)
@@ -639,6 +666,7 @@ test_cross_branch_attribution_unquoted_run_list
 test_other_branch_run_ignored
 test_no_run_busy_pane
 test_no_run_idle_pane_uses_log
+test_no_run_idle_status_busy_footer_is_working
 test_dead_pane_ignores_stale_status_log
 test_dead_pane_still_reports_terminal_run_step
 test_dead_pane_still_reports_active_run_step

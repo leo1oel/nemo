@@ -43,10 +43,11 @@
 # All functions are `set -u` and `set -e` safe (guarded herdr calls, explicit
 # returns) so they can be sourced into either context.
 
-# Busy-footer FALLBACK regex (used only when herdr's agent_status is
-# unavailable). Covers the tool-run footer ("esc to interrupt") AND the thinking
-# spinner line ("… (thinking with <effort> effort)"), which the bare "esc to
-# interrupt" misses. Primary busy detection is agent_status, in the daemon.
+# Busy-footer regex, used to corroborate any non-`working` agent_status verdict
+# (idle included — see fm_herdr_pane_is_busy) and as the fallback when
+# agent_status is unavailable. Covers the tool-run footer ("esc to interrupt")
+# AND the thinking spinner line ("… (thinking with <effort> effort)"), which the
+# bare "esc to interrupt" misses.
 FM_HERDR_BUSY_REGEX_DEFAULT='esc to interrupt|thinking with'
 
 # Box-drawing / pipe glyphs Claude (and other harnesses) use to draw the
@@ -241,20 +242,29 @@ fm_herdr_pane_agent_status() {  # <handle>
 }
 
 # fm_herdr_pane_is_busy: 0 if the pane's agent is currently working. PRIMARY
-# signal is herdr's agent_status, which covers BOTH the thinking spinner and
-# tool-run phases — the busy footer alone misses thinking (Claude shows
-# "… (thinking with <effort> effort)", not "esc to interrupt"). Falls back to the
-# footer regex only when agent_status is unavailable (integration not installed).
-# FM_BUSY_REGEX overrides the fallback set.
+# signal is herdr's agent_status: `working` alone is trusted outright — it
+# covers the thinking spinner, which the busy footer misses (Claude shows
+# "… (thinking with <effort> effort)", not "esc to interrupt").
+#
+# A non-working verdict (idle/blocked/done) is corroborated against the pane's
+# own rendered text, exactly like unknown/empty: agent_status reports
+# generation state only, so a crew blocked on its own long foreground tool
+# call (e.g. the synchronous no-mistakes pipeline a validating crewmate
+# drives) reads idle for that whole span even though the pane still shows the
+# busy footer. Trusting a bare idle outright made a genuinely working crew
+# read as not provably working, triggering an immediate stale wake instead of
+# absorb-then-escalate. A genuinely human-blocked agent (a permission dialog,
+# not mid-tool-call) does not render the busy footer, so the corroboration
+# does not mask that case: it stays correctly not-busy.
+# FM_BUSY_REGEX overrides the corroboration/fallback regex set.
 fm_herdr_pane_is_busy() {  # <handle>
   local h=$1 st tail40
   [ -n "$h" ] || return 1
   st=$(fm_herdr_pane_agent_status "$h")
   case "$st" in
     working) return 0 ;;
-    idle|blocked|done) return 1 ;;
   esac
-  # agent_status unknown/empty -> footer-regex fallback.
+  # idle/blocked/done and unknown/empty alike -> footer-regex corroboration.
   tail40=$(herdr pane read "$h" --source visible --lines 40 2>/dev/null) || return 1
   printf '%s' "$tail40" | grep -v '^[[:space:]]*$' | tail -6 \
     | grep -qiE "${FM_BUSY_REGEX:-$FM_HERDR_BUSY_REGEX_DEFAULT}"
