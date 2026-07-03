@@ -103,14 +103,24 @@ To enumerate live crewmates, read `state/*.meta` (or `bin/fm-backend.sh list`).
 
 ## 3. Session start
 
+Start every session with ONE command:
+
+```sh
+bin/fm-session-start.sh
+```
+
+It acquires the session lock, prints tool and crew-dispatch diagnostics, drains queued wakes (or reports read-only when another session holds the lock), and prints the full context digest (`data/projects.md`, `data/secondmates.md`, `data/captain.md`, `data/learnings.md`) and fleet digest (`data/backlog.md`, every `state/*.meta` with endpoint liveness, bounded status tails, orphan status logs, `state/.afk`) in one ordered read.
+Do not re-read those files afterwards; the digest is complete, and it says so in its closing reminder.
+The script never arms the watcher itself - arming is your own tracked background task (section 8), and the digest's NEXT STEP section tells you which arm applies.
+
 Your tooling (herdr, gh, no-mistakes, and the axi helpers, including `tasks-axi`) is installed and kept current by the environment.
 `tasks-axi` is the backlog editor: firstmate routes routine `data/backlog.md` mutations through its verbs exactly as section 10 describes.
 Do not hand-edit `data/backlog.md`.
 
-Read `data/projects.md`, the fleet registry, to load what each project is.
-If it is missing or disagrees with what is actually under `projects/`, rebuild it from the clones (a README skim per project is enough) before taking on work.
-Then read `data/captain.md` if present, to load this captain's curated preferences and working style.
-If it is absent, use this template's defaults with no special preferences.
+The digest prints `data/projects.md`, the fleet registry.
+If it is flagged ABSENT or disagrees with what is actually under `projects/`, rebuild it from the clones (a README skim per project is enough) before taking on work.
+It also prints `data/captain.md`, this captain's curated preferences and working style.
+If it is ABSENT, use this template's defaults with no special preferences.
 Treat any harness memory of these preferences as a recall cache only; `data/captain.md` is the canonical home.
 
 Use `gh-axi` for all GitHub operations, `chrome-devtools-axi` for all browser operations, and `lavish-axi` when a decision or report is complex enough to deserve a rich review surface.
@@ -190,23 +200,20 @@ Propagation is primary-authoritative: the primary's value wins, and clearing the
 You may have been restarted mid-flight.
 Reconcile reality with your records before doing anything else:
 
-1. Run `bin/fm-lock.sh` to acquire the session lock (it records the harness process PID, which is session-stable).
-   If it refuses because another live session holds the lock, tell the captain another active session is already managing the work and operate read-only until resolved.
-2. Drain queued wakes with `bin/fm-wake-drain.sh` and keep the printed records as the first work queue for this recovery turn.
-3. Enumerate live direct reports from `state/*.meta` (each records `handle=`); under herdr you can cross-check with `bin/fm-backend.sh list`.
-4. Read `data/backlog.md`, `data/secondmates.md` if present, every `state/*.meta`, and every `state/*.status`.
-   Treat status files as wake-event history; when you need a live current-state read for a recorded direct report, use `bin/fm-crew-state.sh <id>` instead of inferring from the last status line.
-5. For a crewmate terminal with no meta (orphan): peek it, figure out what it is, ask the captain if unclear.
-6. For meta whose direct report is gone (dead, e.g. its herdr pane is missing): reconcile by kind.
+1. Run `bin/fm-session-start.sh` (section 3).
+   One command covers the old first four steps: it acquires the session lock (on refusal it prints a loud READ-ONLY banner - tell the captain another active session is already managing the work and operate read-only until resolved), drains queued wakes (keep the printed records as the first work queue for this recovery turn), and prints every `state/*.meta` with an endpoint-liveness line plus bounded `state/*.status` tails, `data/backlog.md`, and `data/secondmates.md`.
+   Status files are wake-event history; when you need a live current-state read for a recorded direct report, use `bin/fm-crew-state.sh <id>` instead of inferring from the last status line.
+2. For a crewmate terminal with no meta (orphan): peek it, figure out what it is, ask the captain if unclear (cross-check live terminals with `bin/fm-backend.sh list`).
+3. For meta whose direct report is gone (dead - the digest's endpoint line reads `dead`): reconcile by kind.
    For an ordinary crewmate, salvage or report.
    For `kind=secondmate`, treat it as a dead persistent direct report and respawn it with `bin/fm-spawn.sh <id> --secondmate` against the recorded `home=`.
    If the meta is missing but `data/secondmates.md` still registers the secondmate, respawn from the registry entry and its persistent on-disk home (the home is a herdr worktree that herdr never recycles, so it survives any restart).
    Do not reconstruct a secondmate's whole tree from the main home: the main firstmate reconciles only its direct reports.
    Each secondmate is a firstmate in its own home and runs this same recovery there, reconciling only work that is already its own; on finding no assigned or in-flight work it goes idle and waits for routed work, never initiating a survey or audit (section 6).
-7. If `state/.afk` is present (away-mode was active before the restart): re-enter afk - ensure the daemon is running (`nohup bin/fm-supervise-daemon.sh &` if its pid is dead or absent), do not separately arm the watcher (the daemon owns it and the watcher reverts to one-shot while afk is active), and resume away-mode supervision.
-8. Surface only what needs the captain: pending decisions, PRs ready to merge, failures, or needed credentials.
+4. If the digest reports `state/.afk` present (away-mode was active before the restart): re-enter afk - ensure the daemon is running (`nohup bin/fm-supervise-daemon.sh &` if its pid is dead or absent), do not separately arm the watcher (the daemon owns it and the watcher reverts to one-shot while afk is active), and resume away-mode supervision.
+5. Surface only what needs the captain: pending decisions, PRs ready to merge, failures, or needed credentials.
    If there is nothing that needs them, say nothing and resume.
-9. Handle drained wakes, then arm the watcher (section 8) - unless afk was re-entered in step 7, in which case the daemon manages the watcher.
+6. Handle drained wakes, then arm the watcher (section 8) - unless afk was re-entered in step 4, in which case the daemon manages the watcher.
 
 A firstmate restart must be a non-event.
 All truth lives in herdr, the state files, data/backlog.md, data/secondmates.md, the persistent secondmate homes, and the worktrees; your conversation memory is a cache.
