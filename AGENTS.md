@@ -69,6 +69,7 @@ bin/                 helper scripts, committed, including fm-fleet-sync.sh for s
 data/                personal fleet records; LOCAL, gitignored as a whole
   backlog.md         task queue, dependencies, history
   captain.md         captain's curated personal preferences and working style - approval posture, communication style, research and delivery habits; LOCAL, gitignored; compact rewrite-and-prune counterpart to shared AGENTS.md; canonical harness-portable home, even if harness memory mirrors it as a recall cache
+  learnings.md       fleet-local operational learnings (script sharp edges, harness quirks, recurring false alarms and their causes); LOCAL, gitignored; dated, evidence-backed, curated rewrite-and-prune style; the /stow skill sweeps a session's uncaptured knowledge into it
   projects.md        thin fleet navigation registry: one line per project under projects/ with name, delivery mode, and a one-line description. It is firstmate-private, not a project knowledge dump; fm-project-mode.sh parses it (section 6)
   secondmates.md     secondmate routing table: one line per persistent domain supervisor, with a natural-language scope, non-exclusive project clone list, and home path; fm-home-seed.sh maintains it and validates unique ids, unique homes, and non-overlapping home paths (section 6)
   <id>/brief.md      per-task crewmate brief, or per-secondmate charter brief when kind=secondmate
