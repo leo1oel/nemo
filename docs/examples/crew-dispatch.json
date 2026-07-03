@@ -1,0 +1,20 @@
+{
+  "rules": [
+    {
+      "when": "The task is a trivial mechanical edit such as a rote rename, formatting sweep, targeted typo fix, or simple file gathering.",
+      "use": { "model": "haiku", "effort": "low" },
+      "why": "Use the cheapest fast profile when the task is narrow and low ambiguity."
+    },
+    {
+      "when": "The task is a well-scoped single-subsystem change: a focused bug fix, a small feature behind an existing pattern, or a scout with a narrow question.",
+      "use": { "model": "sonnet", "effort": "medium" },
+      "why": "A mid-tier profile handles bounded work without paying for the top tier."
+    },
+    {
+      "when": "The task is a big or ambiguous multi-file feature, a risky refactor, or work that requires holding many moving parts in mind.",
+      "use": { "model": "opus", "effort": "high" },
+      "why": "Use the strongest profile for broad design and implementation work."
+    }
+  ],
+  "default": { "model": "default", "effort": "medium" }
+}

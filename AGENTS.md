@@ -73,11 +73,14 @@ data/                personal fleet records; LOCAL, gitignored as a whole
   secondmates.md     secondmate routing table: one line per persistent domain supervisor, with a natural-language scope, non-exclusive project clone list, and home path; fm-home-seed.sh maintains it and validates unique ids, unique homes, and non-overlapping home paths (section 6)
   <id>/brief.md      per-task crewmate brief, or per-secondmate charter brief when kind=secondmate
   <id>/report.md     scout task deliverable, written by the crewmate; survives teardown
+config/              optional local knobs; LOCAL, gitignored
+  crew-dispatch.json crewmate dispatch profiles: natural-language rules choosing a per-task model/effort (section 4); inherited by secondmate homes via fm-config-inherit-lib.sh
+  secondmate-profile "<model> [<effort>]" pin for secondmate launches (section 4); primary-only, deliberately never inherited
 projects/            cloned repos; gitignored; READ-ONLY for you
 state/               volatile runtime signals; gitignored
   <id>.status        appended by crewmates: "<state>: <note>" wake-event lines, not current-state truth
   <id>.turn-ended    touched by turn-end hooks
-  <id>.meta          written by fm-spawn: handle=, workspace=, worktree=, project=, harness=, kind=, mode=, tasktmp= (fm-pr-check appends pr= and GitHub's pr_head= when available); kind=secondmate also records home= and home_workspace= and projects=
+  <id>.meta          written by fm-spawn: handle=, workspace=, worktree=, project=, harness=, kind=, mode=, model=, effort=, tasktmp= (fm-pr-check appends pr= and GitHub's pr_head= when available); kind=secondmate also records home= and home_workspace= and projects=
   <id>.check.sh      optional slow poll you write per task (e.g. merged-PR check)
   .wake-queue        durable queued wakes: epoch<TAB>seq<TAB>kind<TAB>key<TAB>payload
   .watch.lock .wake-queue.lock watcher singleton and queue serialization locks
@@ -129,6 +132,58 @@ The launch mechanics (launch command, autonomy flag, turn-end hook) live in `bin
 
 The supervision knowledge - the trust/bypass-permissions dialog, root/sudo `IS_SANDBOX` forwarding, and the dim/faint ghost-text quirk and its detector - lives in the `harness-adapters` skill; load it before any harness-specific operation.
 After every spawn, peek the pane within ~20s and accept any trust/bypass dialog per that skill, then verify the brief started processing.
+
+### Crew dispatch profiles
+
+`config/crew-dispatch.json` is an optional local dispatch profile file.
+It is firstmate-maintained but human-editable.
+When the captain expresses a standing preference such as "use haiku for trivial edits", firstmate codifies it into this file; the captain may also hand-edit it.
+This fork is Claude-only, so a profile chooses the model/effort axes of the one Claude launch; there is no harness axis.
+See `docs/examples/crew-dispatch.json` for a documented starting point to copy into local `config/crew-dispatch.json`.
+
+Schema:
+
+```json
+{
+  "rules": [
+    {
+      "when": "<natural-language condition describing a kind of task>",
+      "use": { "model": "<model name or default>", "effort": "<low|medium|high|xhigh|max, optional>" },
+      "why": "<optional rationale that helps firstmate choose>"
+    }
+  ],
+  "default": { "model": "<optional model>", "effort": "<optional effort>" }
+}
+```
+
+Per rule, `when` and `use` are required, and `use` must set at least one of `model`/`effort`; `why` and `default` are optional.
+An omitted or `default` model/effort means the launch uses Claude's own default for that axis (no flag is passed).
+
+When `config/crew-dispatch.json` is present, read it during intake before every crewmate or scout dispatch.
+Pick the single best-fit rule using your own judgment.
+This is explicitly not first-match: weigh all rules, their `when` text, and their `why` rationales against the actual task.
+Resolve the chosen rule's `use` object into concrete `--model`/`--effort` flags and pass them to `bin/fm-spawn.sh` explicitly.
+If no rule fits, use `default`; if `default` is also absent, pass `--model default` so the launch keeps Claude's defaults.
+This is enforced: when `config/crew-dispatch.json` exists and is valid JSON, `bin/fm-spawn.sh` refuses template-launched crewmate and scout spawns that carry neither `--model` nor `--effort` - the consultation backstop, so the rules are never silently skipped.
+An invalid file cannot be consulted, so `fm-spawn` warns loudly (`CREW_DISPATCH: invalid ...`) and does not enforce the backstop; fix the JSON when convenient.
+Raw launch commands (the unverified-adapter escape hatch) and secondmate launches are exempt.
+The shell scripts never parse or match the natural-language rules; firstmate does the matching and passes only concrete flags.
+
+Precedence, highest first:
+
+1. An explicit per-task captain override, such as "use haiku for this".
+2. firstmate's best-fit rule from `config/crew-dispatch.json`.
+3. The dispatch file's `default` profile.
+4. No profile: Claude's own defaults (`--model default`).
+
+The verified profile axes are model via `--model <name>` and effort via `--effort <low|medium|high|xhigh|max>`; both are recorded as `model=`/`effort=` in the task's meta for traceability.
+
+Secondmate launches resolve their profile from `config/secondmate-profile` instead (a single line `<model> [<effort>]`, first non-empty non-comment line; either token may be `default`).
+The pin is re-resolved on EVERY secondmate spawn and respawn (recovery, restart), so it is durable without per-task recording; explicit `--model`/`--effort` flags on the spawn still win.
+`config/secondmate-profile` is the primary's own launch setting and is deliberately never inherited into secondmate homes.
+
+The primary's `config/crew-dispatch.json` IS inherited: a secondmate spawn propagates the declared inheritable config set (`bin/fm-config-inherit-lib.sh`) into the home's `config/`, and `bin/fm-config-push.sh` pushes a mid-session edit to every live secondmate home without respawning anything.
+Propagation is primary-authoritative: the primary's value wins, and clearing the primary's file clears it downstream.
 
 ## 5. Recovery (run at every session start)
 
@@ -280,23 +335,26 @@ Write the brief per section 11.
 
 ```sh
 bin/fm-spawn.sh <id> projects/<repo>             # runs the crewmate on Claude Code
+bin/fm-spawn.sh <id> projects/<repo> --model <name> --effort <level>   # with an explicit dispatch profile (section 4)
 bin/fm-spawn.sh <id> projects/<repo> --scout     # scout task; records kind=scout in meta
 bin/fm-spawn.sh <id> --secondmate                # launch a registered persistent secondmate in its home
 bin/fm-spawn.sh <id> <firstmate-home> --secondmate   # launch or recover an explicit secondmate home
-bin/fm-spawn.sh <id1>=projects/<repo1> <id2>=projects/<repo2> [--scout]   # batch: one call, several tasks
+bin/fm-spawn.sh <id1>=projects/<repo1> <id2>=projects/<repo2> [--scout] [--model <name>] [--effort <level>]   # batch: one call, several tasks
 ```
 
-Dispatch several tasks in one call by passing `id=repo` pairs instead of a single `<id> <project>`; each pair is spawned through the same single-task path, a shared `--scout` applies to all, and the looping happens inside the script so you never hand-write a multi-task shell loop.
+When `config/crew-dispatch.json` exists, consult its rules first (section 4) and pass the resolved profile as explicit `--model`/`--effort` flags; the script refuses a template-launched crewmate/scout spawn without them while the file is active.
+Dispatch several tasks in one call by passing `id=repo` pairs instead of a single `<id> <project>`; each pair is spawned through the same single-task path, shared `--scout`/`--model`/`--effort` flags apply to all, and the looping happens inside the script so you never hand-write a multi-task shell loop.
 If one pair fails, the rest still run and the batch exits non-zero.
 Batch dispatch does not support `--secondmate`; spawn each secondmate explicitly.
 
-The script owns the verified Claude launch template, resolves the project's delivery mode (`fm-project-mode.sh`) for ship/scout tasks, and records `harness=`, `kind=`, and `mode=` in the task's meta; a non-flag third argument containing whitespace is treated as a raw launch command (escape hatch).
+The script owns the verified Claude launch template, resolves the project's delivery mode (`fm-project-mode.sh`) for ship/scout tasks, and records `harness=`, `kind=`, `mode=`, `model=`, and `effort=` in the task's meta; a non-flag third argument containing whitespace is treated as a raw launch command (escape hatch).
 
 For ship and scout tasks, the script creates a fresh herdr worktree workspace, asserts the opened worktree is a genuine isolated worktree distinct from the project's primary checkout (aborting the spawn otherwise, to prevent the worktree tangle of section 8), launches the crewmate as a herdr agent pane in it, installs the turn-end hook, and records `state/<id>.meta`.
 Worktrees start at detached HEAD on a clean default branch; ship briefs tell the crewmate to create its branch, while scout briefs keep the worktree scratch.
 For `kind=secondmate`, the same script launches in the registered or explicit firstmate home instead of creating a per-task worktree, reuses the home's herdr workspace (opening one for a plain-directory home), uses the home's `data/charter.md` as the launch prompt, installs no turn-end hook (the secondmate runs its own watcher), and records `home=`, `home_workspace=`, and `projects=` alongside `mode=secondmate`.
 Before a secondmate launch, the script fast-forwards the home worktree to the primary checkout's current default-branch commit by a purely local fast-forward (no fetch), so a freshly spawned or recovery-respawned secondmate always runs the primary's version of `AGENTS.md`, `bin/`, and the skills; the home is a herdr worktree of this same repo, so the commit is already present in the shared object store.
 The sync is ff-only and guarded by `bin/fm-ff-lib.sh`: a dirty, diverged, or wrong-branch home is left untouched and launches as-is with a one-line warning, never force-moved.
+A secondmate spawn also resolves a missing `--model`/`--effort` from `config/secondmate-profile` and propagates the primary's inheritable config (`config/crew-dispatch.json`) into the home's `config/` (section 4).
 After spawning, peek the pane to confirm the crewmate is processing the brief (and handle any trust dialog per the `harness-adapters` skill).
 Add the task to `data/backlog.md` under In flight.
 

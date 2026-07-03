@@ -1,14 +1,27 @@
 #!/usr/bin/env bash
 # Spawn a direct report: a crewmate in a herdr worktree workspace, or a persistent
 # secondmate in its isolated firstmate home.
-# Usage: fm-spawn.sh <task-id> <project-dir> [launch-command] [--scout]
-#        fm-spawn.sh <task-id> [<firstmate-home>] [launch-command] --secondmate
+# Usage: fm-spawn.sh <task-id> <project-dir> [launch-command] [--model <name>] [--effort <level>] [--scout]
+#        fm-spawn.sh <task-id> [<firstmate-home>] [launch-command] [--model <name>] [--effort <level>] --secondmate
 #   This fork is Claude-only: with no launch arg the agent runs Claude Code. A non-flag
 #   string containing whitespace is treated as a RAW launch command (escape hatch).
+#   --model <name> and --effort <low|medium|high|xhigh|max> are concrete profile axes
+#   for the Claude launch (claude --model / --effort); either may be the literal
+#   `default`, which satisfies the dispatch backstop below without adding a flag.
+#   Both are recorded as model=/effort= in the task's meta.
+#   Dispatch backstop (AGENTS.md section 4): when config/crew-dispatch.json exists and
+#   is valid JSON, a template-launched crewmate/scout spawn REFUSES unless the caller
+#   passed --model or --effort explicitly, so the dispatch rules are never silently
+#   skipped. Raw launch commands and --secondmate spawns are exempt; an invalid file
+#   warns loudly and is not enforced (rules that cannot be read cannot be consulted).
+#   --secondmate launches resolve a missing --model/--effort from the primary's
+#   config/secondmate-profile ("<model> [<effort>]", first non-comment line; explicit
+#   flags win), so a pin survives every respawn.
 #   --scout records kind=scout in the task's meta (report deliverable, scratch worktree;
 #   see AGENTS.md section 7). --secondmate records kind=secondmate and launches in a
 #   provisioned firstmate home (a herdr worktree of $FM_ROOT seeded by fm-home-seed.sh);
-#   the default is kind=ship.
+#   the default is kind=ship. A secondmate spawn also propagates the primary's declared
+#   inheritable config (fm-config-inherit-lib.sh) into the home's config/.
 #   Before a secondmate launch, the home is locally fast-forwarded to the primary
 #   default-branch commit when safe (no fetch); skipped syncs warn and launch unchanged.
 #   Ship/scout spawns refuse to launch after the worktree is opened unless the resolved
@@ -17,9 +30,10 @@
 # Batch dispatch: pass one or more `id=repo` pairs instead of a single <id> <project>, e.g.
 #     fm-spawn.sh fix-a-k3=projects/foo add-b-q7=projects/bar [--scout]
 #   Each pair re-execs this script in single-task mode, so the single path stays the only
-#   source of truth; a shared --scout applies to every pair. The loop lives here, in bash,
-#   so callers never hand-write a multi-task shell loop (the tool shell is zsh, which does
-#   not word-split unquoted $vars and silently breaks ad-hoc `for ... in $pairs` loops).
+#   source of truth; shared --scout/--model/--effort flags apply to every pair. The loop
+#   lives here, in bash, so callers never hand-write a multi-task shell loop (the tool
+#   shell is zsh, which does not word-split unquoted $vars and silently breaks ad-hoc
+#   `for ... in $pairs` loops).
 #   The launch template lives in launch_template() below; the only placeholder is:
 #     __BRIEF__    absolute path to data/<task-id>/brief.md (or the home's data/charter.md
 #                  for a secondmate)
@@ -39,6 +53,7 @@ FM_HOME="${FM_HOME:-${FM_ROOT_OVERRIDE:-$FM_ROOT}}"
 STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
 DATA="${FM_DATA_OVERRIDE:-$FM_HOME/data}"
 PROJECTS="${FM_PROJECTS_OVERRIDE:-$FM_HOME/projects}"
+CONFIG="${FM_CONFIG_OVERRIDE:-$FM_HOME/config}"
 SUB_HOME_MARKER=".fm-secondmate-home"
 SUB_HOME_WS_MARKER=".fm-secondmate-home.workspace"
 # shellcheck source=bin/fm-ff-lib.sh
@@ -47,14 +62,38 @@ SUB_HOME_WS_MARKER=".fm-secondmate-home.workspace"
 # set by the batch loop below), so the guard runs once for the batch, not once per pair.
 [ -n "${FM_SPAWN_NO_GUARD:-}" ] || "$FM_ROOT/bin/fm-guard.sh" || true
 KIND=ship
+MODEL=
+EFFORT=
+MODEL_SET=0
+EFFORT_SET=0
+want_value=
 POS=()
 for a in "$@"; do
+  if [ -n "$want_value" ]; then
+    case "$want_value" in
+      model) MODEL=$a; MODEL_SET=1 ;;
+      effort) EFFORT=$a; EFFORT_SET=1 ;;
+    esac
+    want_value=
+    continue
+  fi
   case "$a" in
     --scout) KIND=scout ;;
     --secondmate) KIND=secondmate ;;
+    --model) want_value=model ;;
+    --model=*) MODEL=${a#--model=}; MODEL_SET=1 ;;
+    --effort) want_value=effort ;;
+    --effort=*) EFFORT=${a#--effort=}; EFFORT_SET=1 ;;
     *) POS+=("$a") ;;
   esac
 done
+[ -z "$want_value" ] || { echo "error: --$want_value requires a value" >&2; exit 2; }
+[ "$MODEL_SET" -eq 0 ] || [ -n "$MODEL" ] || { echo "error: --model requires a non-empty value" >&2; exit 1; }
+[ "$EFFORT_SET" -eq 0 ] || [ -n "$EFFORT" ] || { echo "error: --effort requires a non-empty value" >&2; exit 1; }
+case "$EFFORT" in
+  ''|default|low|medium|high|xhigh|max) : ;;
+  *) echo "error: --effort must be one of low, medium, high, xhigh, max (or default)" >&2; exit 1 ;;
+esac
 
 # Batch dispatch (see header): when the first positional is an `id=repo` pair, treat every
 # positional as one and spawn each by re-execing this script in single-task mode. We use
@@ -75,11 +114,14 @@ if [ "${#POS[@]}" -gt 0 ] && [ "${POS[0]}" != "$idpart" ] && case "$idpart" in *
       echo "error: batch dispatch does not support --secondmate; spawn each secondmate explicitly" >&2
       rc=2
       continue
-    elif [ "$KIND" = scout ]; then
-      if FM_SPAWN_NO_GUARD=1 "$FM_ROOT/bin/fm-spawn.sh" "${pair%%=*}" "${pair#*=}" --scout; then :; else echo "batch: FAILED to spawn ${pair%%=*} (${pair#*=})" >&2; rc=1; fi
-    else
-      if FM_SPAWN_NO_GUARD=1 "$FM_ROOT/bin/fm-spawn.sh" "${pair%%=*}" "${pair#*=}"; then :; else echo "batch: FAILED to spawn ${pair%%=*} (${pair#*=})" >&2; rc=1; fi
     fi
+    # Shared flags forwarded to every pair; guarded expansion keeps set -u safe
+    # when the array is empty.
+    shared_flags=()
+    [ "$KIND" != scout ] || shared_flags+=(--scout)
+    [ "$MODEL_SET" -eq 0 ] || shared_flags+=(--model "$MODEL")
+    [ "$EFFORT_SET" -eq 0 ] || shared_flags+=(--effort "$EFFORT")
+    if FM_SPAWN_NO_GUARD=1 "$FM_ROOT/bin/fm-spawn.sh" "${pair%%=*}" "${pair#*=}" ${shared_flags[@]+"${shared_flags[@]}"}; then :; else echo "batch: FAILED to spawn ${pair%%=*} (${pair#*=})" >&2; rc=1; fi
   done
   exit "$rc"
 fi
@@ -131,14 +173,16 @@ launch_template() {
     # does NOT suppress the interactive ghost text (verified empirically), so the env
     # var is the correct control. The dim-aware composer reader in fm-herdr-lib.sh is
     # the defense-in-depth backstop for any pane this flag cannot reach.
-    claude) printf '%s' 'CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false claude --dangerously-skip-permissions "$(cat __BRIEF__)"' ;;
+    claude) printf '%s' 'CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false claude --dangerously-skip-permissions __MODELFLAG____EFFORTFLAG__"$(cat __BRIEF__)"' ;;
     *) return 1 ;;
   esac
 }
 
+RAW_LAUNCH=0
 case "$ARG3" in
   *' '*)  # raw launch command (unverified-adapter escape hatch)
     LAUNCH=$ARG3
+    RAW_LAUNCH=1
     HARNESS=""
     for word in $LAUNCH; do
       case "$word" in [A-Za-z_]*=*) continue ;; *) HARNESS=$(basename "$word"); break ;; esac
@@ -153,6 +197,23 @@ case "$ARG3" in
     LAUNCH=$(launch_template "$HARNESS") || { echo "error: unknown harness '$HARNESS'; pass a raw launch command to use an unverified adapter" >&2; exit 1; }
     ;;
 esac
+
+# Dispatch backstop (AGENTS.md section 4): when config/crew-dispatch.json exists and is
+# readable JSON, a template-launched crewmate/scout spawn must carry an explicit
+# --model/--effort profile resolved from the dispatch rules, so the rules are never
+# silently skipped ('--model default' satisfies it without adding a launch flag). Raw
+# launch commands are the escape hatch and secondmates resolve through
+# config/secondmate-profile instead, so both are exempt. An unparseable file cannot be
+# consulted, so it warns loudly and is not enforced.
+if [ "$KIND" != secondmate ] && [ "$RAW_LAUNCH" -eq 0 ] && [ -f "$CONFIG/crew-dispatch.json" ]; then
+  if command -v python3 >/dev/null 2>&1 \
+    && ! python3 -c 'import json,sys; json.load(open(sys.argv[1]))' "$CONFIG/crew-dispatch.json" 2>/dev/null; then
+    echo "CREW_DISPATCH: invalid config/crew-dispatch.json - not valid JSON; fix it (rules cannot be consulted, backstop not enforced for this spawn)" >&2
+  elif [ "$MODEL_SET" -eq 0 ] && [ "$EFFORT_SET" -eq 0 ]; then
+    echo "error: config/crew-dispatch.json is active - consult the dispatch rules and pass an explicit --model/--effort profile (use '--model default' when the chosen profile keeps the defaults). This backstop keeps the rules from being silently skipped." >&2
+    exit 1
+  fi
+fi
 
 # Root/sudo sandbox: forward IS_SANDBOX into the crewmate launch. claude refuses
 # --dangerously-skip-permissions when running as root for security UNLESS IS_SANDBOX marks
@@ -289,6 +350,20 @@ shell_quote() {
   printf "'"
   printf '%s' "$1" | sed "s/'/'\\\\''/g"
   printf "'"
+}
+
+# Claude launch flags for the resolved model/effort profile. Empty or the literal
+# `default` means "use the CLI's own default" and emits no flag, so a
+# backstop-satisfying '--model default' launches byte-identical to a pre-profile
+# spawn. Each emitted flag carries its own trailing space, so the template's
+# __MODELFLAG____EFFORTFLAG__ substitution needs none.
+model_flag() {
+  [ -n "$MODEL" ] && [ "$MODEL" != default ] || return 0
+  printf -- '--model %s ' "$(shell_quote "$MODEL")"
+}
+effort_flag() {
+  [ -n "$EFFORT" ] && [ "$EFFORT" != default ] || return 0
+  printf -- '--effort %s ' "$(shell_quote "$EFFORT")"
 }
 
 resolved_existing_dir() {
@@ -451,11 +526,44 @@ if [ "$KIND" = secondmate ]; then
   MODE=secondmate
   SECONDMATE_PROJECTS=$(secondmate_registry_value "$ID" projects || true)
 
+  # config/secondmate-profile pin ("<model> [<effort>]", first non-empty non-comment
+  # line): resolved fresh on EVERY secondmate (re)spawn - recovery, restart - so the pin
+  # is durable without per-task recording. Explicit --model/--effort flags win. An
+  # invalid effort token warns and is ignored rather than failing a recovery respawn.
+  if [ -f "$CONFIG/secondmate-profile" ]; then
+    sm_profile_line=$(grep -vE '^[[:space:]]*(#|$)' "$CONFIG/secondmate-profile" 2>/dev/null | head -1 || true)
+    if [ -n "$sm_profile_line" ]; then
+      read -r sm_pin_model sm_pin_effort _sm_rest <<EOF
+$sm_profile_line
+EOF
+      case "${sm_pin_effort:-}" in
+        ''|default|low|medium|high|xhigh|max) : ;;
+        *)
+          echo "warning: config/secondmate-profile effort '${sm_pin_effort}' is not one of low, medium, high, xhigh, max; ignoring it" >&2
+          sm_pin_effort=
+          ;;
+      esac
+      if [ "$MODEL_SET" -eq 0 ] && [ -n "${sm_pin_model:-}" ]; then MODEL=$sm_pin_model; fi
+      if [ "$EFFORT_SET" -eq 0 ] && [ -n "${sm_pin_effort:-}" ]; then EFFORT=$sm_pin_effort; fi
+    fi
+  fi
+
+  # Propagate the primary's declared inheritable config (fm-config-inherit-lib.sh) into
+  # the home's config/, so this secondmate's own crewmates inherit the primary's dispatch
+  # rules. Primary-authoritative and idempotent; a propagation failure warns but never
+  # blocks a launch (recovery must still work with a wedged config copy).
+  # shellcheck source=bin/fm-config-inherit-lib.sh
+  . "$SCRIPT_DIR/fm-config-inherit-lib.sh"
+  propagate_inheritable_config "$CONFIG" "$HOME_PATH/config" \
+    || echo "warning: inheritable config propagation to $HOME_PATH/config reported errors; launching anyway" >&2
+
   # The secondmate runs as a firstmate in its own home: point its operational env at the
   # home so its own fm-* calls resolve there, and use the same launch-template path.
   BRIEF_Q=$(shell_quote "$BRIEF")
   HOME_Q=$(shell_quote "$HOME_PATH")
   LAUNCH=${LAUNCH//__BRIEF__/$BRIEF_Q}
+  LAUNCH=${LAUNCH//__MODELFLAG__/$(model_flag)}
+  LAUNCH=${LAUNCH//__EFFORTFLAG__/$(effort_flag)}
   LAUNCH="FM_ROOT_OVERRIDE= FM_STATE_OVERRIDE= FM_DATA_OVERRIDE= FM_PROJECTS_OVERRIDE= FM_HOME=$HOME_Q $LAUNCH"
 
   # Pre-trust the home so claude's first-launch folder-trust dialog never collapses the spawn.
@@ -475,6 +583,8 @@ if [ "$KIND" = secondmate ]; then
     echo "harness=$HARNESS"
     echo "kind=$KIND"
     echo "mode=$MODE"
+    echo "model=$MODEL"
+    echo "effort=$EFFORT"
     echo "tasktmp=$TASK_TMP"
     echo "home=$HOME_PATH"
     echo "home_workspace=$WS"
@@ -560,6 +670,8 @@ PROJ_NAME=$(basename "$PROJ_ABS")
 MODE=$("$FM_ROOT/bin/fm-project-mode.sh" "$PROJ_NAME")
 
 LAUNCH=${LAUNCH//__BRIEF__/$BRIEF}
+LAUNCH=${LAUNCH//__MODELFLAG__/$(model_flag)}
+LAUNCH=${LAUNCH//__EFFORTFLAG__/$(effort_flag)}
 
 # Pre-trust the worktree so claude's first-launch folder-trust dialog never collapses the spawn.
 case "$HARNESS" in claude*) claude_pretrust "$WT" ;; esac
@@ -580,6 +692,8 @@ mkdir -p "$STATE"
   echo "harness=$HARNESS"
   echo "kind=$KIND"
   echo "mode=$MODE"
+  echo "model=$MODEL"
+  echo "effort=$EFFORT"
   echo "tasktmp=$TASK_TMP"
 } > "$STATE/$ID.meta"
 
