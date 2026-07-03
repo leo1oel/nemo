@@ -13,6 +13,7 @@ Read each script's header comment before first use.
 | `fm-guard.sh`            | Warn when tasks are in flight but queued wakes are pending or the watcher is down; also alarm on a worktree tangle (primary checkout on a feature branch) |
 | `fm-tangle-lib.sh`       | Shared classifier for the worktree-tangle guard: a named non-default branch in the primary checkout                |
 | `fm-home-seed.sh`        | Provision a secondmate home transactionally (a herdr worktree of the repo with `-`), clone projects, initialize gates, and maintain `data/secondmates.md` |
+| `fm-session-start.sh`    | One-command session start: lock, diagnostics, wake drain (or read-only report), full context + fleet digest, and the watcher next step |
 | `fm-spawn.sh`            | Spawn one task, several `id=repo` pairs in one batch, or a persistent secondmate with `--secondmate`; records task kind; `--model`/`--effort` set the Claude launch profile, enforced as the dispatch backstop while `config/crew-dispatch.json` is active |
 | `fm-config-inherit-lib.sh` | Shared primary-authoritative propagation of declared inheritable config items into secondmate homes             |
 | `fm-config-push.sh`      | Push the primary's inheritable local config (e.g. `config/crew-dispatch.json`) to every live secondmate home mid-session |
