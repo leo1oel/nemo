@@ -224,29 +224,31 @@ log_reports_ci_ready() {
   esac
 }
 # Most recent run id whose branch matches, from the `no-mistakes axi` run list.
-nm_run_id_for_branch() {  # <branch> <list-output>
-  local branch=$1 list=$2 row id rest br in_runs=0 found=""
+# Coarse run status for a branch from `no-mistakes runs --limit N`. The bare
+# `axi` list shows only the most recent ~10 runs, so an older run for this
+# branch silently falls off it and attribution fails (the miss behind the #207
+# false-stale incidents); the runs listing reaches much deeper. Each row reads
+# `<status> <branch> ...`; the first matching branch wins. Prints the status
+# token, or nothing when the branch has no run in the listing.
+FM_CREW_STATE_RUNS_LIMIT=${FM_CREW_STATE_RUNS_LIMIT:-200}
+case "$FM_CREW_STATE_RUNS_LIMIT" in ''|*[!0-9]*) FM_CREW_STATE_RUNS_LIMIT=200 ;; esac
+nm_runs_status_for_branch() {  # <branch>
+  local branch=$1 out row st rest br
+  out=$(nm_run runs --limit "$FM_CREW_STATE_RUNS_LIMIT")
+  [ -n "$out" ] || return 0
   while IFS= read -r row; do
-    if [[ $(trim "$row") =~ ^runs\[[0-9]+\]\{.*\}:$ ]]; then
-      in_runs=1
-      continue
-    fi
-    [ "$in_runs" = 1 ] || continue
-    case "$row" in
-      '') continue ;;
-      [[:space:]]*) ;;
-      *) break ;;
-    esac
     row=$(trim "$row")
-    case "$row" in
-      *,*) ;;
-      *) continue ;;
-    esac
-    id=${row%%,*}; id=$(strip_quotes "$id")
-    rest=${row#*,}
-    br=${rest%%,*}; br=$(strip_quotes "$br")
-    if [ "$br" = "$branch" ]; then printf '%s\n' "$id"; break; fi
-  done <<< "$list" | { IFS= read -r found || true; printf '%s' "$found"; }
+    [ -n "$row" ] || continue
+    st=${row%% *}
+    rest=${row#* }
+    rest=$(trim "$rest")
+    br=${rest%% *}
+    if [ "$br" = "$branch" ]; then
+      printf '%s' "$st"
+      return 0
+    fi
+  done <<< "$out"
+  return 0
 }
 
 # CREW_BRANCH is empty at detached HEAD (a just-spawned crew, or a scout's
@@ -254,6 +256,8 @@ nm_run_id_for_branch() {  # <branch> <list-output>
 CREW_BRANCH=$(git -C "$WT" symbolic-ref --quiet --short HEAD 2>/dev/null || true)
 
 HAVE_RUN=0
+RUN_SOURCE=full
+COARSE_STATUS=""
 # Scouts and secondmates never drive a no-mistakes validation of their own
 # worktree, so skip the lookup for them and read state from pane/log directly.
 if [ "$KIND" = ship ] && [ -n "$CREW_BRANCH" ] && command -v no-mistakes >/dev/null 2>&1; then
@@ -262,14 +266,13 @@ if [ "$KIND" = ship ] && [ -n "$CREW_BRANCH" ] && command -v no-mistakes >/dev/n
   if [ -n "$run_branch" ] && [ "$run_branch" = "$CREW_BRANCH" ]; then
     HAVE_RUN=1
   else
-    # The active-or-most-recent run is for another branch; find this branch's
-    # own most recent run in the list, then inspect it directly.
-    list_out=$(nm_run axi)
-    rid=$(nm_run_id_for_branch "$CREW_BRANCH" "$list_out")
-    if [ -n "$rid" ]; then
-      RUN_OUT=$(nm_run axi status --run "$rid")
-      run_branch=$(strip_quotes "$(nm_field branch)")
-      [ "$run_branch" = "$CREW_BRANCH" ] && HAVE_RUN=1
+    # The active-or-most-recent run is for another branch; attribute this
+    # branch's own run through the deep runs listing (nm_runs_status_for_branch).
+    # Its coarse status row is enough to classify working/done/failed.
+    COARSE_STATUS=$(nm_runs_status_for_branch "$CREW_BRANCH")
+    if [ -n "$COARSE_STATUS" ]; then
+      HAVE_RUN=1
+      RUN_SOURCE=coarse
     fi
   fi
 fi
@@ -277,6 +280,21 @@ fi
 # --- run-step authoritative path -------------------------------------------
 
 if [ "$HAVE_RUN" = 1 ]; then
+  RUN_STATE=working
+  RUN_DETAIL=""
+  if [ "$RUN_SOURCE" = coarse ]; then
+    # Coarse attribution: the runs listing gives status only, no gate detail.
+    # A parked gate on a coarse-attributed run still reads `running` here; the
+    # working verdict is what matters for stale triage, and the full detail is
+    # one `no-mistakes axi status --run` away when firstmate needs it.
+    case "$COARSE_STATUS" in
+      running)   RUN_STATE=working; RUN_DETAIL="validating (background run)" ;;
+      completed) RUN_STATE="done";  RUN_DETAIL="run completed" ;;
+      failed)    RUN_STATE=failed;  RUN_DETAIL="run failed" ;;
+      cancelled) RUN_STATE=failed;  RUN_DETAIL="run cancelled" ;;
+      *)         RUN_STATE=unknown; RUN_DETAIL="runs list status: $COARSE_STATUS" ;;
+    esac
+  else
   status=$(strip_quotes "$(nm_field status)")
   outcome=$(strip_quotes "$(nm_field outcome)")
   awaiting=$(printf '%s\n' "$RUN_OUT" | grep -E '^[[:space:]]*awaiting_agent:' | head -1 || true)
@@ -284,8 +302,6 @@ if [ "$HAVE_RUN" = 1 ]; then
   has_gate=0
   nm_has_gate && has_gate=1
 
-  RUN_STATE=working
-  RUN_DETAIL=""
   if [ -n "$outcome" ]; then
     case "$outcome" in
       passed)        RUN_STATE="done"; RUN_DETAIL="run passed: PR merged/closed" ;;
@@ -319,6 +335,7 @@ if [ "$HAVE_RUN" = 1 ]; then
       "")             RUN_STATE=working; RUN_DETAIL="run active" ;;
       *)              RUN_STATE=working; RUN_DETAIL="run active ($status)" ;;
     esac
+  fi
   fi
 
   if [ "$RUN_STATE" = working ] && log_reports_ci_ready; then
