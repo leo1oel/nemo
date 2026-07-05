@@ -18,7 +18,7 @@ Read each script's header comment before first use.
 | `fm-config-inherit-lib.sh` | Shared primary-authoritative propagation of declared inheritable config items into secondmate homes             |
 | `fm-config-push.sh`      | Push the primary's inheritable local config (e.g. `config/crew-dispatch.json`) to every live secondmate home mid-session |
 | `fm-project-mode.sh`     | Resolve a project's delivery mode from `data/projects.md`                                                          |
-| `fm-review-diff.sh`      | Review a crewmate branch against the authoritative base, with optional `--stat` output                              |
+| `fm-review-diff.sh`      | Review a crewmate branch against the authoritative base, comparing the recorded PR head (`pr_head=` or `refs/pull/<n>/head`) when `pr=` is recorded, with optional `--stat` output |
 | `fm-watch-arm.sh`        | Verified per-home watcher re-arm; reports `started`, `healthy`, or `FAILED`; `--restart` relaunches only this home's watcher |
 | `fm-watch.sh`            | Singleton-safe always-on watcher; absorbs no-verb signal and stale wakes only when the crew is provably working, queues and exits for actionable wakes, and reverts to daemon-owned one-shot behavior while `state/.afk` exists |
 | `fm-classify-lib.sh`     | Shared captain-relevant wake classifier sourced by the watcher and daemon, plus the watcher's provably-working predicate (over `fm-crew-state.sh`) |

@@ -383,6 +383,7 @@ A ship task's path from `done` to landed on `main` is set by the project's `mode
 
 When reviewing any crewmate branch diff, use `bin/fm-review-diff.sh <id>` rather than `git diff <default>...branch` directly.
 Pooled clones keep their local default refs frozen at clone time and can lag `origin`; the helper always compares against the authoritative base.
+When the task's meta records `pr=`, the helper also compares the PR head (recorded `pr_head=` or a fetched `refs/pull/<n>/head`) instead of the possibly-lagging local branch, so review stays current after no-mistakes fix rounds push to the PR; an unresolvable PR head falls back to the local branch with a loud warning.
 
 ### Validate
 
