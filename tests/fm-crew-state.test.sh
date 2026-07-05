@@ -69,7 +69,15 @@ make_fakebin() {  # <dir> -> echoes fakebin path
   cat > "$fb/no-mistakes" <<'SH'
 #!/usr/bin/env bash
 set -u
-[ "${1:-}" = axi ] || exit 0
+case "${1:-}" in
+  runs)
+    # Deep runs listing (`no-mistakes runs --limit N`): "<status> <branch> ..." rows.
+    printf '%s\n' "${FM_FAKE_RUNS_LIST:-}"
+    exit 0
+    ;;
+  axi) ;;
+  *) exit 0 ;;
+esac
 shift
 case "${1:-}" in
   status)
@@ -135,10 +143,11 @@ reset_fakes() {
   FM_FAKE_AXI_STATUS=""
   FM_FAKE_AXI_STATUS_RUN=""
   FM_FAKE_AXI_LIST=""
+  FM_FAKE_RUNS_LIST=""
   FM_FAKE_BUSY=0
   FM_FAKE_PANE_MISSING=0
   FM_FAKE_PANE_FOOTER_BUSY=0
-  export FM_FAKE_AXI_STATUS FM_FAKE_AXI_STATUS_RUN FM_FAKE_AXI_LIST FM_FAKE_BUSY FM_FAKE_PANE_MISSING FM_FAKE_PANE_FOOTER_BUSY
+  export FM_FAKE_AXI_STATUS FM_FAKE_AXI_STATUS_RUN FM_FAKE_AXI_LIST FM_FAKE_RUNS_LIST FM_FAKE_BUSY FM_FAKE_PANE_MISSING FM_FAKE_PANE_FOOTER_BUSY
 }
 
 # --- run-object fixtures (TOON, as `no-mistakes axi status` emits) -----------
@@ -407,45 +416,49 @@ test_terminal_failed() {
 
 # (e) cross-branch attribution: `axi status` returns ANOTHER branch's run, so the
 # helper finds THIS branch's own run via the run list and inspects it directly.
-test_cross_branch_attribution_via_list() {
+test_cross_branch_attribution_via_runs() {
   reset_fakes
   local d; d=$(new_case crossbranch)
   make_repo_on_branch "$d/wt" fm/feat-f
   make_fakebin "$d" >/dev/null
   fm_write_meta "$d/state/feat-f.meta" "handle=p1" "worktree=$d/wt" "kind=ship"
-  # The repo-wide active/most-recent run belongs to a different crew's branch.
+  # The repo-wide active/most-recent run belongs to a different crew's branch;
+  # this branch's own run is attributed through the deep runs listing.
   FM_FAKE_AXI_STATUS="$(run_running fm/other-crew)"
-  FM_FAKE_AXI_LIST="$(cat <<EOF
-runs[2]{id,branch,status,head,pr}:
-  "01OTHER",fm/other-crew,running,aa,""
-  "01MINE",fm/feat-f,running,bb,""
+  FM_FAKE_RUNS_LIST="$(cat <<EOF
+running fm/other-crew aa 2026-07-03
+running fm/feat-f bb 2026-07-03
 EOF
 )"
-  FM_FAKE_AXI_STATUS_RUN="$(run_running fm/feat-f)"
   local out; out=$(run_crew_state "$d" feat-f)
-  assert_contains "$out" "state: working" "this branch's own run attributed via list"
-  assert_contains "$out" "source: run-step" "list-resolved run -> run-step source"
-  pass "cross-branch run is attributed via the run list"
+  assert_contains "$out" "state: working" "this branch's own run attributed via runs listing"
+  assert_contains "$out" "source: run-step" "runs-resolved run -> run-step source"
+  assert_contains "$out" "validating (background run)" "coarse running maps to validating"
+  pass "cross-branch run is attributed via the deep runs listing"
 }
 
-test_cross_branch_attribution_unquoted_run_list() {
+test_coarse_runs_status_mapping() {
   reset_fakes
-  local d; d=$(new_case crossbranch-unquoted)
+  local d out
+  d=$(new_case coarse-done)
   make_repo_on_branch "$d/wt" fm/feat-fq
   make_fakebin "$d" >/dev/null
   fm_write_meta "$d/state/feat-fq.meta" "handle=p1" "worktree=$d/wt" "kind=ship"
   FM_FAKE_AXI_STATUS="$(run_running fm/other-crew)"
-  FM_FAKE_AXI_LIST="$(cat <<EOF
-runs[2]{id,branch,status,head,pr}:
-  01OTHER, "fm/other-crew" ,running,aa,""
-  01MINE, "fm/feat-fq" ,running,bb,""
-EOF
-)"
-  FM_FAKE_AXI_STATUS_RUN="$(run_running fm/feat-fq)"
-  local out; out=$(run_crew_state "$d" feat-fq)
-  assert_contains "$out" "state: working" "unquoted run id attributed via list"
-  assert_contains "$out" "source: run-step" "unquoted list-resolved run -> run-step source"
-  pass "unquoted run-list row is attributed"
+  FM_FAKE_RUNS_LIST="completed fm/feat-fq bb 2026-07-03"
+  out=$(run_crew_state "$d" feat-fq)
+  assert_contains "$out" "state: done" "coarse completed maps to done"
+
+  reset_fakes
+  d=$(new_case coarse-failed)
+  make_repo_on_branch "$d/wt" fm/feat-fr
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/feat-fr.meta" "handle=p1" "worktree=$d/wt" "kind=ship"
+  FM_FAKE_AXI_STATUS="$(run_running fm/other-crew)"
+  FM_FAKE_RUNS_LIST="failed fm/feat-fr bb 2026-07-03"
+  out=$(run_crew_state "$d" feat-fr)
+  assert_contains "$out" "state: failed" "coarse failed maps to failed"
+  pass "coarse runs-list statuses map to done/failed"
 }
 
 # A different-branch run with NO matching list row must NOT be misattributed.
@@ -457,11 +470,7 @@ test_other_branch_run_ignored() {
   fm_write_meta "$d/state/feat-g.meta" "handle=p1" "worktree=$d/wt" "kind=ship"
   printf 'done: implemented, ready to validate\n' > "$d/state/feat-g.status"
   FM_FAKE_AXI_STATUS="$(run_running fm/some-other)"
-  FM_FAKE_AXI_LIST="$(cat <<EOF
-runs[1]{id,branch,status,head,pr}:
-  "01OTHER",fm/some-other,running,aa,""
-EOF
-)"
+  FM_FAKE_RUNS_LIST="running fm/some-other aa 2026-07-03"
   FM_FAKE_BUSY=0
   local out; out=$(run_crew_state "$d" feat-g)
   assert_not_contains "$out" "source: run-step" "another branch's run not misattributed"
@@ -661,8 +670,8 @@ test_gate_block_parked_not_superseded
 test_ci_ready_done_log_beats_monitoring_run
 test_terminal_passed
 test_terminal_failed
-test_cross_branch_attribution_via_list
-test_cross_branch_attribution_unquoted_run_list
+test_cross_branch_attribution_via_runs
+test_coarse_runs_status_mapping
 test_other_branch_run_ignored
 test_no_run_busy_pane
 test_no_run_idle_pane_uses_log

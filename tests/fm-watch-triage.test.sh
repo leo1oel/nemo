@@ -253,6 +253,58 @@ test_terminal_stale_surfaced() {
   pass "a stale pane sitting on a terminal status is surfaced (queue + exit)"
 }
 
+# --- behavioral: terminal-looking stale log OVERRIDDEN by an active run --------
+# A crew's status log gets no new entry once firstmate hands it to a no-mistakes
+# validation, so its last line can stay a pre-validation "done:" for the whole
+# run. A provably-working crew must absorb that stale (with a wedge timer), not
+# surface as terminal every poll.
+
+test_terminal_stale_provably_working_overridden() {
+  local dir state fakebin out drain_out capture_file id w key pane_hash sig pid
+  dir=$(make_case terminal-stale-working); state="$dir/state"; fakebin="$dir/fakebin"
+  out="$dir/watch.out"; drain_out="$dir/drain.out"; capture_file="$dir/pane.txt"
+  id="valid"; w="fm-$id"
+  printf 'validating quietly' > "$capture_file"
+  printf 'handle=p1\nkind=ship\n' > "$state/$id.meta"
+  printf 'done: implemented, handing to validation\n' > "$state/$id.status"
+  sig=$(seen_sig "$state/$id.status"); printf '%s' "$sig" > "$state/.seen-${id}_status"
+  key=$(printf '%s' "$w" | tr ':/.' '___')
+  pane_hash=$(hash_text "validating quietly")
+  printf '%s' "$pane_hash" > "$state/.hash-$key"
+  printf '1\n' > "$state/.count-$key"
+  export FM_FAKE_CREW_STATE='state: working · source: run-step · validating (running)'
+
+  # Phase A: provably working overrides the captain-relevant log line -> absorbed.
+  PATH="$fakebin:$PATH" FM_FAKE_PANE_CAPTURE="$capture_file" FM_STATE_OVERRIDE="$state" \
+    FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" FM_STALE_ESCALATE_SECS=999 FM_POLL=1 FM_SIGNAL_GRACE=1 \
+    FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" > "$out" &
+  pid=$!
+  if ! wait_live "$pid" 30; then reap "$pid"; unset FM_FAKE_CREW_STATE; fail "watcher surfaced a provably-working crew as terminal stale (should absorb): $(cat "$out")"; fi
+  [ ! -s "$out" ] || { reap "$pid"; unset FM_FAKE_CREW_STATE; fail "overridden terminal stale printed a wake reason"; }
+  [ ! -s "$state/.wake-queue" ] || { reap "$pid"; unset FM_FAKE_CREW_STATE; fail "overridden terminal stale enqueued a wake"; }
+  [ "$(cat "$state/.stale-$key" 2>/dev/null || true)" = "$pane_hash" ] || { reap "$pid"; unset FM_FAKE_CREW_STATE; fail "stale suppressor not advanced on the override"; }
+  [ -s "$state/.stale-since-$key" ] || { reap "$pid"; unset FM_FAKE_CREW_STATE; fail "wedge timer was not recorded on the override"; }
+  grep -F "overriding a stale captain-relevant status" "$state/.watch-triage.log" >/dev/null 2>&1 \
+    || { reap "$pid"; unset FM_FAKE_CREW_STATE; fail "override was not logged to the triage log"; }
+  reap "$pid"
+
+  # Phase B: backdate the wedge timer past the threshold -> next run escalates
+  # even though the log line is still captain-relevant.
+  echo $(( $(date +%s) - 500 )) > "$state/.stale-since-$key"
+  : > "$out"
+  PATH="$fakebin:$PATH" FM_FAKE_PANE_CAPTURE="$capture_file" FM_STATE_OVERRIDE="$state" \
+    FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" FM_STALE_ESCALATE_SECS=240 FM_POLL=1 FM_SIGNAL_GRACE=1 \
+    FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" > "$out" &
+  pid=$!
+  wait_for_exit "$pid" 40 || { unset FM_FAKE_CREW_STATE; fail "watcher did not wedge-escalate an overridden terminal stale past the threshold"; }
+  assert_contains "$(cat "$out")" "stale: $w" "override escalation did not print a stale wake"
+  assert_contains "$(cat "$out")" "possible wedge" "override escalation did not flag a possible wedge"
+  FM_STATE_OVERRIDE="$state" "$DRAIN" > "$drain_out" 2>/dev/null || { unset FM_FAKE_CREW_STATE; fail "drain after the override escalation failed"; }
+  grep "$(printf '\tstale\t')" "$drain_out" | grep -F "$w" >/dev/null || { unset FM_FAKE_CREW_STATE; fail "override escalation was not queued"; }
+  unset FM_FAKE_CREW_STATE
+  pass "a terminal-looking stale log is overridden while the crew provably works, then wedge-escalates"
+}
+
 # --- behavioral: non-terminal stale, provably working -> absorb then escalate ---
 
 test_nonterminal_stale_provably_working_absorbed_then_escalated() {
@@ -372,6 +424,7 @@ test_captain_signal_surfaced
 test_noverb_signal_provably_working_absorbed
 test_noverb_signal_not_working_surfaced
 test_terminal_stale_surfaced
+test_terminal_stale_provably_working_overridden
 test_nonterminal_stale_provably_working_absorbed_then_escalated
 test_nonterminal_stale_not_working_surfaced
 test_heartbeat_absorbs_then_backstop_surfaces
