@@ -12,6 +12,7 @@ Read each script's header comment before first use.
 | `fm-ensure-agents-md.sh` | Ensure project `AGENTS.md` is the real memory file and `CLAUDE.md` symlinks to it                                   |
 | `fm-guard.sh`            | Warn when tasks are in flight but queued wakes are pending or the watcher is down; also alarm on a worktree tangle (primary checkout on a feature branch) |
 | `fm-tangle-lib.sh`       | Shared classifier for the worktree-tangle guard: a named non-default branch in the primary checkout                |
+| `fm-turnend-guard.sh`    | Claude Code Stop hook (tracked `.claude/settings.json`): blocks a primary turn end, once per turn, when tasks are in flight with no fresh watcher beacon (or a dead afk daemon) |
 | `fm-home-seed.sh`        | Provision a secondmate home transactionally (a herdr worktree of the repo with `-`), clone projects, initialize gates, and maintain `data/secondmates.md` |
 | `fm-session-start.sh`    | One-command session start: lock, diagnostics, wake drain (or read-only report), full context + fleet digest, and the watcher next step |
 | `fm-spawn.sh`            | Spawn one task, several `id=repo` pairs in one batch, or a persistent secondmate with `--secondmate`; records task kind; `--model`/`--effort` set the Claude launch profile, enforced as the dispatch backstop while `config/crew-dispatch.json` is active |
