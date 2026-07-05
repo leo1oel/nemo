@@ -538,6 +538,9 @@ If a crewmate sent to work firstmate-on-itself branches or commits in the primar
 The check is scoped precisely to the primary: detached HEAD (the legitimate resting state of crewmate worktrees and secondmate homes on the default branch) and the default branch itself never alarm; only a named non-default branch checked out in the primary does.
 That restore is the one sanctioned firstmate-initiated git write to the primary - a non-destructive branch switch that strands nothing, since the work stays safe on its own branch ref.
 Two further guards prevent the tangle upstream: `fm-spawn` refuses to launch unless the opened worktree is a genuine isolated worktree distinct from the primary checkout, and every ship brief's first instruction has the crewmate verify it is in its own worktree before branching (section 11).
+The pull-based guard has a push-based backstop: `bin/fm-turnend-guard.sh`, a Claude Code Stop hook registered in the tracked `.claude/settings.json` (anchored via `$CLAUDE_PROJECT_DIR` because hooks run from the session cwd).
+It fires on every primary turn end and blocks the stop (forcing the turn to continue, at most once per turn via Claude's `stop_hook_active` loop guard) when tasks are in flight but no watcher holds a fresh beacon - so a session that would otherwise end a turn blind gets told to arm `bin/fm-watch-arm.sh` instead of sitting unsupervised for hours.
+It scopes itself to the primary checkout at runtime (secondmate homes and linked worktrees are silent no-ops), fails open on any unreadable payload, and while `state/.afk` exists it judges the daemon pid instead of the watcher beacon.
 Watcher liveness is not enough if you are foreground-blocked.
 Whenever one or more tasks are in flight, do not run long foreground-blocking operations in your own session.
 This is about firstmate's own session: it includes a no-mistakes pipeline firstmate runs for this repo, long builds, and any other multi-minute command.
