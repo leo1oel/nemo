@@ -742,17 +742,34 @@ test_arm_reports_healthy_for_live_fresh_watcher() {
     i=$((i + 1))
   done
   [ "$(cat "$state/.watch.lock/pid" 2>/dev/null || true)" = "$wpid" ] || fail "seed watcher did not take the lock"
-  # Arming must confirm the existing watcher and NOT start a second one.
+  # Arming must ATTACH to the existing watcher (not exit into an empty false
+  # wake) and NOT start a second one; it exits 0 only once that cycle ends.
   status=0
-  PATH="$fakebin:$PATH" FM_STATE_OVERRIDE="$state" "$WATCH_ARM" > "$armout" || status=$?
-  [ "$status" -eq 0 ] || fail "arm did not exit zero for a healthy watcher (status $status)"
-  grep -F "watcher: healthy pid=$wpid" "$armout" >/dev/null || fail "arm did not report the live watcher as healthy"
+  PATH="$fakebin:$PATH" FM_STATE_OVERRIDE="$state" "$WATCH_ARM" > "$armout" &
+  armpid=$!
+  i=0
+  while [ "$i" -lt 60 ]; do
+    grep -qF "watcher: attached pid=$wpid" "$armout" 2>/dev/null && break
+    sleep 0.1
+    i=$((i + 1))
+  done
+  grep -F "watcher: attached pid=$wpid" "$armout" >/dev/null || fail "arm did not report attaching to the live watcher"
+  kill -0 "$armpid" 2>/dev/null || fail "arm exited immediately on a healthy watcher (empty false wake)"
   ! grep -qF 'watcher: started' "$armout" || fail "arm started a second watcher behind a healthy one"
   ! grep -qF 'watcher: FAILED' "$armout" || fail "arm reported FAILED for a healthy watcher"
   [ "$(cat "$state/.watch.lock/pid" 2>/dev/null || true)" = "$wpid" ] || fail "arm disturbed the healthy watcher's lock"
   kill "$wpid" 2>/dev/null || true
   wait "$wpid" 2>/dev/null || true
-  pass "arm reports a live fresh watcher as healthy and exits zero"
+  i=0
+  while [ "$i" -lt 100 ]; do
+    kill -0 "$armpid" 2>/dev/null || break
+    sleep 0.1
+    i=$((i + 1))
+  done
+  status=0
+  wait "$armpid" 2>/dev/null || status=$?
+  [ "$status" -eq 0 ] || fail "attached arm did not exit zero when the watcher cycle ended (status $status)"
+  pass "arm attaches to a live fresh watcher and exits zero only when that cycle ends"
 }
 
 test_arm_starts_and_confirms_fresh_watcher() {
@@ -854,14 +871,29 @@ test_arm_waits_for_peer_beacon_after_child_stands_down() {
   ) &
   beater=$!
   status=0
-  PATH="$fakebin:$PATH" FM_HOME="$dir" FM_POLL=5 FM_SIGNAL_GRACE=1 FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 FM_ARM_CONFIRM_TIMEOUT=4 "$WATCH_ARM" > "$armout" || status=$?
+  PATH="$fakebin:$PATH" FM_HOME="$dir" FM_POLL=5 FM_SIGNAL_GRACE=1 FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 FM_ARM_CONFIRM_TIMEOUT=4 "$WATCH_ARM" > "$armout" &
+  armpid=$!
   wait "$beater" 2>/dev/null || true
-  [ "$status" -eq 0 ] || fail "arm returned non-zero while peer became healthy (status $status): $(cat "$armout")"
-  grep -F "watcher: healthy pid=$peer" "$armout" >/dev/null || fail "arm did not wait for and report the peer watcher"
+  i=0
+  while [ "$i" -lt 80 ]; do
+    grep -qF "watcher: attached pid=$peer" "$armout" 2>/dev/null && break
+    sleep 0.1
+    i=$((i + 1))
+  done
+  grep -F "watcher: attached pid=$peer" "$armout" >/dev/null || fail "arm did not attach to the peer watcher: $(cat "$armout")"
   ! grep -qF 'watcher: FAILED' "$armout" || fail "arm falsely reported FAILED during peer startup race"
   kill "$peer" 2>/dev/null || true
   wait "$peer" 2>/dev/null || true
-  pass "arm waits for a peer watcher beacon after child stands down"
+  i=0
+  while [ "$i" -lt 100 ]; do
+    kill -0 "$armpid" 2>/dev/null || break
+    sleep 0.1
+    i=$((i + 1))
+  done
+  status=0
+  wait "$armpid" 2>/dev/null || status=$?
+  [ "$status" -eq 0 ] || fail "arm attached to peer did not exit zero when the peer ended (status $status): $(cat "$armout")"
+  pass "arm attaches to a peer watcher after child stands down, exiting when the peer ends"
 }
 
 test_arm_fails_loud_when_no_fresh_watcher_confirmable() {

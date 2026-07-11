@@ -118,6 +118,38 @@ report_healthy() {
   echo "watcher: healthy pid=$HEALTHY_PID (beacon ${age}s)"
 }
 
+# Poll interval while attached to an existing healthy watcher.
+ATTACH_POLL=${FM_ARM_ATTACH_POLL:-0.5}
+report_attached() {
+  local age
+  age=$(fm_path_age "$BEAT")
+  echo "watcher: attached pid=$HEALTHY_PID (beacon ${age}s)"
+}
+
+# Stay alive until the attached identity-matched healthy holder is gone. An arm
+# that exits immediately on a healthy watcher completes the harness background
+# task and injects an EMPTY false wake (firstmate re-arms after every turn with
+# work in flight, so this fired constantly). Attaching instead makes the
+# background-notify fire when that cycle actually ends. If a different healthy
+# watcher appears mid-attach (rare steal), re-attach to it. Does not reprint a
+# wake reason line; exit 0 lets the harness notify, and firstmate drains
+# state/.wake-queue on background completion.
+attach_and_wait() {
+  local attached_pid=$1
+  while :; do
+    if healthy_watcher; then
+      if [ "$HEALTHY_PID" != "$attached_pid" ]; then
+        attached_pid=$HEALTHY_PID
+        report_attached
+      fi
+      sleep "$ATTACH_POLL"
+      continue
+    fi
+    # Attached cycle ended (pid gone, identity mismatch, or beacon no longer fresh).
+    exit 0
+  done
+}
+
 watch_output_has_wake() {
   local out=$1
   grep -Eq '^(signal:|stale:|check:|heartbeat($|:))' "$out" 2>/dev/null
@@ -156,11 +188,12 @@ if [ "$mode" = restart ]; then
 fi
 
 # If a genuinely live+fresh watcher already holds the lock, do not start a second
-# one - the singleton would no-op anyway. Report it honestly and return success.
-# (--restart skips this: it just stopped this home's watcher and wants a fresh one.)
+# one - attach to that cycle and wait until it ends so the harness notify fires
+# then, not as an immediate empty wake. (--restart skips this: it just stopped
+# this home's watcher and wants a fresh one.)
 if [ "$mode" = arm ] && healthy_watcher; then
-  report_healthy
-  exit 0
+  report_attached
+  attach_and_wait "$HEALTHY_PID"
 fi
 
 # Start a watcher as a tracked child and confirm it before settling in. The child
@@ -202,7 +235,18 @@ while :; do
       rm -f "$child_out" 2>/dev/null || true
       exit "$rc"
     fi
-    # Another watcher won the singleton; our child stood down. Report the live one.
+    # Another watcher won the singleton; our child stood down. In arm mode,
+    # attach to the winner instead of exiting into an empty false wake; a
+    # restart-only healthy peer is reported and left alone.
+    if [ "$mode" = arm ]; then
+      report_attached
+      wait "$child" 2>/dev/null || true
+      rm -f "$child_out" 2>/dev/null || true
+      child=
+      child_out=
+      trap - HUP TERM INT
+      attach_and_wait "$HEALTHY_PID"
+    fi
     report_healthy
     wait "$child" 2>/dev/null || true
     rm -f "$child_out" 2>/dev/null || true

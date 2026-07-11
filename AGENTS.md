@@ -484,7 +484,7 @@ The printed reason line is still useful, but the drained queue is the lossless b
 **Keep exactly one live cycle.**
 While any task is in flight, keep exactly one live `bin/fm-watch-arm.sh` background task.
 Run it as its own harness-tracked background task, never bundled with other commands and never fire-and-forget with shell `&`.
-Trust its self-verifying status line: `started` or `healthy` means a cycle is live; `FAILED` means drain any queued wakes, then arm again.
+Trust its self-verifying status line: `started` or `attached` means a cycle is live and this arm rides it until it fires (an arm that finds an already-healthy watcher attaches and waits instead of exiting into an empty false wake); `healthy` appears only on the `--restart` path; `FAILED` means drain any queued wakes, then arm again.
 After a background watcher exits with `signal`, `stale`, `check`, or `heartbeat`, handle the drained wakes and re-arm before ending the turn.
 Never end a turn with tasks in flight and no live watcher cycle.
 If a forced restart is ever genuinely needed, use `bin/fm-watch-arm.sh --restart`, which stops only THIS home's watcher (the pid recorded in this home's `state/.watch.lock`) and starts a fresh one.

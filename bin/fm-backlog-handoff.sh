@@ -7,9 +7,11 @@
 #
 # Scope-matching is firstmate's JUDGMENT: you pass the task-id keys you have
 # already judged in-scope for the secondmate. This script performs only the
-# mechanical move - it removes each matched line from data/backlog.md under the
-# active firstmate home and appends it, under the same section heading, to the
-# secondmate home's data/backlog.md (home resolved from data/secondmates.md). It
+# mechanical move - it removes each matched item BLOCK (the checklist header
+# line plus its indented body lines, e.g. tasks-axi notes) from data/backlog.md
+# under the active firstmate home and appends it, under the same section
+# heading, to the secondmate home's data/backlog.md (home resolved from
+# data/secondmates.md). It
 # never changes a line's text, never writes into a project (it refuses a home
 # that is not a firstmate home), and is idempotent: a key already present in the
 # secondmate backlog is reported and skipped, so re-running converges. If any key
@@ -257,15 +259,25 @@ awk -v keysfile="$KEYS_FILE" -v movedfile="$MOVED_FILE" '
     while ((getline k < keysfile) > 0) { if (k != "") want[k] = 1 }
     section = "## Queued"
   }
-  /^## / { section = $0; print; next }
+  /^## / { section = $0; moving = 0; print; next }
   /^- \[[ x]\] / {
     rest = $0
     sub(/^- \[[ x]\] +/, "", rest)
     id = rest
     sub(/[ \t].*/, "", id)
-    if (id in want) { print section "\t" $0 > movedfile; next }
+    if (id in want) { moving = 1; print section "\t" $0 > movedfile; next }
+    moving = 0
+    print; next
   }
-  { print }
+  # Indented lines belong to the item above them (tasks-axi bodies, notes,
+  # blocked-by details - even an indented "## Intent" heading): they travel
+  # with a moved item and stay with a kept one. Anything else (blank line,
+  # free-form text at column 0) ends the current item block.
+  /^[ \t]/ {
+    if (moving) { print section "\t" $0 > movedfile; next }
+    print; next
+  }
+  { moving = 0; print }
 ' "$MAIN_BACKLOG" > "$KEPT_FILE"
 
 # Pass 2: insert each moved line at the end of its section in the sub backlog,
