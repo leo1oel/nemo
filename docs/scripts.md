@@ -21,7 +21,7 @@ Read each script's header comment before first use.
 | `fm-project-mode.sh`     | Resolve a project's delivery mode from `data/projects.md`                                                          |
 | `fm-review-diff.sh`      | Review a crewmate branch against the authoritative base, comparing the recorded PR head (`pr_head=` or `refs/pull/<n>/head`) when `pr=` is recorded, with optional `--stat` output |
 | `fm-watch-arm.sh`        | Verified per-home watcher re-arm; reports `started`, `attached` (rides an already-healthy cycle until it ends, so no empty false wake), or `FAILED`; `--restart` relaunches only this home's watcher (`healthy` is restart-only) |
-| `fm-watch.sh`            | Singleton-safe always-on watcher; absorbs no-verb signal and stale wakes only when the crew is provably working, queues and exits for actionable wakes, and reverts to daemon-owned one-shot behavior while `state/.afk` exists |
+| `fm-watch.sh`            | Singleton-safe always-on watcher; absorbs no-verb signal and stale wakes only when the crew is provably working, queues and exits for actionable wakes (at most one stale/wedge wake per stall episode, on a footer-excluded pane hash), and reverts to daemon-owned one-shot behavior while `state/.afk` exists |
 | `fm-classify-lib.sh`     | Shared captain-relevant wake classifier sourced by the watcher and daemon, plus the watcher's provably-working predicate (over `fm-crew-state.sh`) |
 | `fm-wake-lib.sh`         | Shared durable wake queue and portable lock helpers used by watcher, guard, drain, arm, and daemon scripts          |
 | `fm-herdr-lib.sh`        | Shared herdr pane primitives for composer detection, verified submit, pane existence, and busy-state reads         |
