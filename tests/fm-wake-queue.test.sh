@@ -98,6 +98,14 @@ hash_text() {
   fi
 }
 
+# Mirror fm-watch.sh's staleness hash for seeding pane bookkeeping: strip blank
+# lines, drop the trailing 6-line footer window (the ticking TUI footer the
+# busy regex scans), hash the rest.
+stale_hash_of() {  # <pane-text>
+  printf '%s' "$1" | grep -v '^[[:space:]]*$' | awk '{ l[NR] = $0 } END { for (i = 1; i <= NR - 6; i++) print l[i] }' \
+    | { if command -v md5 >/dev/null 2>&1; then md5 -q; else md5sum | cut -d' ' -f1; fi; }
+}
+
 test_concurrent_append_and_drain() {
   local dir state out1 out2 all pids i pid count unique malformed
   dir=$(make_case concurrent)
@@ -164,7 +172,7 @@ test_stale_enqueue_before_suppressor() {
   # A live task: the watcher enumerates state/*.meta and reads each by its handle.
   printf 'handle=p1\n' > "$state/$id.meta"
   key="fm-$id"
-  pane_hash=$(hash_text "idle prompt")
+  pane_hash=$(stale_hash_of "idle prompt")
   printf '%s' "$pane_hash" > "$state/.hash-$key"
   printf '1\n' > "$state/.count-$key"
   PATH="$fakebin:$PATH" FM_FAKE_PANE_CAPTURE="$capture_file" FM_STATE_OVERRIDE="$state" FM_POLL=1 FM_SIGNAL_GRACE=1 FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" > "$out" &
@@ -196,7 +204,7 @@ SH
   # No captain-relevant status file -> non-terminal stale; the signal path stays inert.
   printf 'handle=p1\nkind=ship\n' > "$state/$id.meta"
   key="fm-$id"
-  pane_hash=$(hash_text "idle building output")
+  pane_hash=$(stale_hash_of "idle building output")
   printf '%s' "$pane_hash" > "$state/.hash-$key"
   printf '1\n' > "$state/.count-$key"
   PATH="$fakebin:$PATH" FM_FAKE_PANE_CAPTURE="$capture_file" FM_STATE_OVERRIDE="$state" \

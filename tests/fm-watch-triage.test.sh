@@ -17,6 +17,9 @@
 #   - terminal stale                      -> surfaced
 #   - non-terminal stale, provably working -> absorbed + wedge timer, then escalates
 #   - non-terminal stale, NOT working      -> surfaced immediately (never waits the timer)
+#   - wedge escalation                     -> exactly once per stall episode
+#   - surfaced stale                       -> no follow-up wedge nag for the same episode
+#   - footer-only tick                     -> staleness hash and bookkeeping unchanged
 #   - heartbeat no-change                  -> absorbed; backstop surfaces an unsurfaced status
 set -u
 
@@ -74,8 +77,14 @@ SH
 seen_sig() {
   if [ "$(uname)" = Darwin ]; then stat -f '%z:%Fm' "$1" 2>/dev/null; else stat -c '%s:%Y' "$1" 2>/dev/null; fi
 }
-hash_text() {
-  if command -v md5 >/dev/null 2>&1; then printf '%s' "$1" | md5 -q; else printf '%s' "$1" | md5sum | cut -d' ' -f1; fi
+hash_stdin() {
+  if command -v md5 >/dev/null 2>&1; then md5 -q; else md5sum | cut -d' ' -f1; fi
+}
+# Mirror fm-watch.sh's staleness hash for seeding pane bookkeeping: strip blank
+# lines, drop the trailing 6-line footer window (the ticking TUI footer the
+# busy regex scans), hash the rest.
+stale_hash_of() {  # <pane-text>
+  printf '%s' "$1" | grep -v '^[[:space:]]*$' | awk '{ l[NR] = $0 } END { for (i = 1; i <= NR - 6; i++) print l[i] }' | hash_stdin
 }
 
 wait_for_exit() {  # <pid> [limit-ticks]
@@ -240,7 +249,7 @@ test_terminal_stale_surfaced() {
   printf 'done: PR https://example.test/pr/3\n' > "$state/$id.status"
   sig=$(seen_sig "$state/$id.status"); printf '%s' "$sig" > "$state/.seen-${id}_status"
   key=$(printf '%s' "$w" | tr ':/.' '___')
-  pane_hash=$(hash_text "finished, awaiting review")
+  pane_hash=$(stale_hash_of "finished, awaiting review")
   printf '%s' "$pane_hash" > "$state/.hash-$key"
   printf '1\n' > "$state/.count-$key"
   PATH="$fakebin:$PATH" FM_FAKE_PANE_CAPTURE="$capture_file" FM_STATE_OVERRIDE="$state" \
@@ -269,7 +278,7 @@ test_terminal_stale_provably_working_overridden() {
   printf 'done: implemented, handing to validation\n' > "$state/$id.status"
   sig=$(seen_sig "$state/$id.status"); printf '%s' "$sig" > "$state/.seen-${id}_status"
   key=$(printf '%s' "$w" | tr ':/.' '___')
-  pane_hash=$(hash_text "validating quietly")
+  pane_hash=$(stale_hash_of "validating quietly")
   printf '%s' "$pane_hash" > "$state/.hash-$key"
   printf '1\n' > "$state/.count-$key"
   export FM_FAKE_CREW_STATE='state: working · source: run-step · validating (running)'
@@ -317,7 +326,7 @@ test_nonterminal_stale_provably_working_absorbed_then_escalated() {
   printf 'working: still compiling\n' > "$state/$id.status"
   sig=$(seen_sig "$state/$id.status"); printf '%s' "$sig" > "$state/.seen-${id}_status"
   key=$(printf '%s' "$w" | tr ':/.' '___')
-  pane_hash=$(hash_text "idle building output")
+  pane_hash=$(stale_hash_of "idle building output")
   printf '%s' "$pane_hash" > "$state/.hash-$key"
   printf '1\n' > "$state/.count-$key"
   export FM_FAKE_CREW_STATE='state: working · source: run-step · ci running'
@@ -363,7 +372,7 @@ test_nonterminal_stale_not_working_surfaced() {
   printf 'working: implementing\n' > "$state/$id.status"
   sig=$(seen_sig "$state/$id.status"); printf '%s' "$sig" > "$state/.seen-${id}_status"
   key=$(printf '%s' "$w" | tr ':/.' '___')
-  pane_hash=$(hash_text "idle prompt, finished")
+  pane_hash=$(stale_hash_of "idle prompt, finished")
   printf '%s' "$pane_hash" > "$state/.hash-$key"
   printf '1\n' > "$state/.count-$key"
   export FM_FAKE_CREW_STATE='state: unknown · source: none · no current-state source available'
@@ -381,6 +390,154 @@ test_nonterminal_stale_not_working_surfaced() {
   grep "$(printf '\tstale\t')" "$drain_out" | grep -F "$w" >/dev/null || { unset FM_FAKE_CREW_STATE; fail "immediate stale wake was not queued"; }
   unset FM_FAKE_CREW_STATE
   pass "a not-provably-working non-terminal stale is surfaced immediately (never left to wait the timer)"
+}
+
+# --- behavioral: wedge escalation fires once per stall episode ----------------
+# A provably-working pane that goes truly static escalates as a possible wedge
+# exactly once. Before the once-per-episode marker, the post-escalation poll
+# self-healed a fresh wedge timer for the SAME hash and the SAME static pane
+# re-escalated every STALE_ESCALATE_SECS, forever (the hourly stale nag storm).
+# A new stall episode (the pane changed, then went static again) escalates once
+# more.
+
+test_wedge_escalates_once_per_episode() {
+  local dir state fakebin out drain_out capture_file id w key pid sig
+  dir=$(make_case wedge-once); state="$dir/state"; fakebin="$dir/fakebin"
+  out="$dir/watch.out"; drain_out="$dir/drain.out"; capture_file="$dir/pane.txt"
+  id="wedged"; w="fm-$id"
+  printf 'running long CI wait\nno new output\nstill the same\nsame\nsame\nsame\nsame\nsame\n' > "$capture_file"
+  printf 'handle=p1\nkind=ship\n' > "$state/$id.meta"
+  printf 'working: waiting on CI\n' > "$state/$id.status"
+  sig=$(seen_sig "$state/$id.status"); printf '%s' "$sig" > "$state/.seen-${id}_status"
+  key=$(printf '%s' "$w" | tr ':/.' '___')
+  export FM_FAKE_CREW_STATE='state: working · source: run-step · ci running'
+
+  # Phase A: no seeded bookkeeping - the watcher itself detects the stale,
+  # absorbs it (provably working), arms the wedge timer, and escalates once
+  # past the (tiny) threshold.
+  PATH="$fakebin:$PATH" FM_FAKE_PANE_CAPTURE="$capture_file" FM_STATE_OVERRIDE="$state" \
+    FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" FM_STALE_ESCALATE_SECS=2 FM_POLL=1 FM_SIGNAL_GRACE=1 \
+    FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" > "$out" &
+  pid=$!
+  wait_for_exit "$pid" 100 || { unset FM_FAKE_CREW_STATE; fail "watcher did not wedge-escalate a static provably-working pane"; }
+  assert_contains "$(cat "$out")" "possible wedge" "first stall episode did not escalate as a possible wedge"
+  [ "$(cat "$state/.stale-escalated-$key" 2>/dev/null || true)" = "$(cat "$state/.hash-$key")" ] \
+    || { unset FM_FAKE_CREW_STATE; fail "escalation did not record the once-per-episode marker"; }
+  FM_STATE_OVERRIDE="$state" "$DRAIN" > "$drain_out" 2>/dev/null || { unset FM_FAKE_CREW_STATE; fail "drain after the first wedge escalation failed"; }
+
+  # Phase B: same pane, same hash, marker present - the episode is already
+  # reported. The watcher must NOT re-arm the timer and re-escalate; it keeps
+  # blocking silently.
+  : > "$out"
+  PATH="$fakebin:$PATH" FM_FAKE_PANE_CAPTURE="$capture_file" FM_STATE_OVERRIDE="$state" \
+    FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" FM_STALE_ESCALATE_SECS=2 FM_POLL=1 FM_SIGNAL_GRACE=1 \
+    FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" > "$out" &
+  pid=$!
+  if ! wait_live "$pid" 45; then reap "$pid"; unset FM_FAKE_CREW_STATE; fail "watcher re-escalated an already-escalated stall episode: $(cat "$out")"; fi
+  [ ! -s "$out" ] || { reap "$pid"; unset FM_FAKE_CREW_STATE; fail "already-escalated episode printed a wake reason"; }
+  [ ! -s "$state/.wake-queue" ] || { reap "$pid"; unset FM_FAKE_CREW_STATE; fail "already-escalated episode enqueued a wake"; }
+  [ ! -e "$state/.stale-since-$key" ] || { reap "$pid"; unset FM_FAKE_CREW_STATE; fail "already-escalated episode re-armed the wedge timer"; }
+  reap "$pid"
+
+  # Phase C: the pane makes progress (content above the footer changes), then
+  # goes static again - a NEW stall episode. It must escalate exactly once more.
+  printf 'resumed, new build output\nfresh line one\nfresh line two\nsame\nsame\nsame\nsame\nsame\n' > "$capture_file"
+  : > "$out"
+  PATH="$fakebin:$PATH" FM_FAKE_PANE_CAPTURE="$capture_file" FM_STATE_OVERRIDE="$state" \
+    FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" FM_STALE_ESCALATE_SECS=2 FM_POLL=1 FM_SIGNAL_GRACE=1 \
+    FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" > "$out" &
+  pid=$!
+  wait_for_exit "$pid" 100 || { unset FM_FAKE_CREW_STATE; fail "a new stall episode after progress did not wedge-escalate"; }
+  assert_contains "$(cat "$out")" "possible wedge" "new stall episode did not escalate as a possible wedge"
+  [ "$(cat "$state/.stale-escalated-$key" 2>/dev/null || true)" = "$(cat "$state/.hash-$key")" ] \
+    || { unset FM_FAKE_CREW_STATE; fail "new episode's escalation did not re-record the marker for the new hash"; }
+  unset FM_FAKE_CREW_STATE
+  pass "wedge escalation fires exactly once per stall episode, and once more per new episode"
+}
+
+# --- behavioral: an immediately-surfaced stale never wedge-nags afterwards ----
+# A stopped crew's stale is surfaced at once (one wake). Before the marker, the
+# next poll self-healed a wedge timer for that same already-surfaced hash and
+# nagged "possible wedge" every STALE_ESCALATE_SECS on top of the original wake.
+
+test_surfaced_stale_never_wedge_nags() {
+  local dir state fakebin out capture_file id w key pid sig
+  dir=$(make_case surfaced-no-nag); state="$dir/state"; fakebin="$dir/fakebin"
+  out="$dir/watch.out"; capture_file="$dir/pane.txt"
+  id="idle"; w="fm-$id"
+  printf 'stopped at a prompt\nline\nline\nline\nline\nline\nline\nline\n' > "$capture_file"
+  printf 'handle=p1\nkind=ship\n' > "$state/$id.meta"
+  printf 'working: implementing\n' > "$state/$id.status"
+  sig=$(seen_sig "$state/$id.status"); printf '%s' "$sig" > "$state/.seen-${id}_status"
+  key=$(printf '%s' "$w" | tr ':/.' '___')
+  export FM_FAKE_CREW_STATE='state: unknown · source: none · no current-state source available'
+
+  # Phase A: the stopped crew's stale surfaces once (existing behavior).
+  PATH="$fakebin:$PATH" FM_FAKE_PANE_CAPTURE="$capture_file" FM_STATE_OVERRIDE="$state" \
+    FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" FM_STALE_ESCALATE_SECS=2 FM_POLL=1 FM_SIGNAL_GRACE=1 \
+    FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" > "$out" &
+  pid=$!
+  wait_for_exit "$pid" 100 || { unset FM_FAKE_CREW_STATE; fail "watcher did not surface the stopped crew's stale"; }
+  grep -Fx "stale: $w" "$out" >/dev/null || { unset FM_FAKE_CREW_STATE; fail "stopped crew's stale wake not printed"; }
+  FM_STATE_OVERRIDE="$state" "$DRAIN" >/dev/null 2>&1 || { unset FM_FAKE_CREW_STATE; fail "drain after the surfaced stale failed"; }
+
+  # Phase B: same static pane. The one wake for this episode already fired;
+  # the watcher must not follow it up with a "possible wedge" nag.
+  : > "$out"
+  PATH="$fakebin:$PATH" FM_FAKE_PANE_CAPTURE="$capture_file" FM_STATE_OVERRIDE="$state" \
+    FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" FM_STALE_ESCALATE_SECS=2 FM_POLL=1 FM_SIGNAL_GRACE=1 \
+    FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" > "$out" &
+  pid=$!
+  if ! wait_live "$pid" 45; then reap "$pid"; unset FM_FAKE_CREW_STATE; fail "watcher wedge-nagged an already-surfaced stale: $(cat "$out")"; fi
+  [ ! -s "$out" ] || { reap "$pid"; unset FM_FAKE_CREW_STATE; fail "already-surfaced stale printed a wake reason"; }
+  [ ! -s "$state/.wake-queue" ] || { reap "$pid"; unset FM_FAKE_CREW_STATE; fail "already-surfaced stale enqueued a wake"; }
+  reap "$pid"; unset FM_FAKE_CREW_STATE
+  pass "an immediately-surfaced stale produces no follow-up wedge nag for the same episode"
+}
+
+# --- behavioral: the ticking TUI footer never changes the staleness hash ------
+# The staleness hash must exclude the footer region the busy regex scans (the
+# last 6 non-blank lines): Claude's footer counters tick on every render, so a
+# footer-included hash makes an idle pane look freshly active, then freshly
+# DISTINCTLY stale, on every tick - an endless stream of one-shot stale wakes.
+
+test_footer_tick_does_not_change_stale_hash() {
+  local dir state fakebin out capture_file id w key pid sig hash_before
+  dir=$(make_case footer-tick); state="$dir/state"; fakebin="$dir/fakebin"
+  out="$dir/watch.out"; capture_file="$dir/pane.txt"
+  id="ticker"; w="fm-$id"
+  printf 'content line 1\ncontent line 2\ncontent line 3\n\n> \nfooter a\nfooter b\nfooter c\nfooter d\n5h: 12%% (4h49m)\n' > "$capture_file"
+  printf 'handle=p1\nkind=ship\n' > "$state/$id.meta"
+  printf 'working: quiet stretch\n' > "$state/$id.status"
+  sig=$(seen_sig "$state/$id.status"); printf '%s' "$sig" > "$state/.seen-${id}_status"
+  key=$(printf '%s' "$w" | tr ':/.' '___')
+  export FM_FAKE_CREW_STATE='state: working · source: run-step · ci running'
+
+  # Warm up: let the watcher record the pane's staleness hash and absorb the
+  # provably-working stale (high threshold: the wedge timer never fires here).
+  PATH="$fakebin:$PATH" FM_FAKE_PANE_CAPTURE="$capture_file" FM_STATE_OVERRIDE="$state" \
+    FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" FM_STALE_ESCALATE_SECS=999999 FM_POLL=1 FM_SIGNAL_GRACE=1 \
+    FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" > "$out" &
+  pid=$!
+  local i=0
+  while [ "$i" -lt 60 ]; do
+    [ "$(cat "$state/.stale-$key" 2>/dev/null || true)" = "$(cat "$state/.hash-$key" 2>/dev/null || echo missing)" ] && break
+    sleep 0.1; i=$((i + 1))
+  done
+  [ "$i" -lt 60 ] || { reap "$pid"; unset FM_FAKE_CREW_STATE; fail "warm-up never absorbed the initial stale"; }
+  hash_before=$(cat "$state/.hash-$key")
+
+  # Tick the footer: only the counter inside the last-6-non-blank-line footer
+  # window changes. The staleness hash - and so all stale bookkeeping - must
+  # not move, and no wake fires.
+  printf 'content line 1\ncontent line 2\ncontent line 3\n\n> \nfooter a\nfooter b\nfooter c\nfooter d\n5h: 12%% (4h48m)\n' > "$capture_file"
+  if ! wait_live "$pid" 45; then reap "$pid"; unset FM_FAKE_CREW_STATE; fail "watcher woke on a footer-only tick: $(cat "$out")"; fi
+  [ "$(cat "$state/.hash-$key")" = "$hash_before" ] || { reap "$pid"; unset FM_FAKE_CREW_STATE; fail "a footer-only tick changed the staleness hash"; }
+  [ ! -s "$out" ] || { reap "$pid"; unset FM_FAKE_CREW_STATE; fail "footer-only tick printed a wake reason"; }
+  [ ! -s "$state/.wake-queue" ] || { reap "$pid"; unset FM_FAKE_CREW_STATE; fail "footer-only tick enqueued a wake"; }
+  [ -e "$state/.stale-since-$key" ] || { reap "$pid"; unset FM_FAKE_CREW_STATE; fail "footer-only tick reset the wedge timer (hash was treated as fresh activity)"; }
+  reap "$pid"; unset FM_FAKE_CREW_STATE
+  pass "a footer-only tick never changes the staleness hash or stale bookkeeping"
 }
 
 # --- behavioral: heartbeat absorb + backstop --------------------------------
@@ -427,6 +584,9 @@ test_terminal_stale_surfaced
 test_terminal_stale_provably_working_overridden
 test_nonterminal_stale_provably_working_absorbed_then_escalated
 test_nonterminal_stale_not_working_surfaced
+test_wedge_escalates_once_per_episode
+test_surfaced_stale_never_wedge_nags
+test_footer_tick_does_not_change_stale_hash
 test_heartbeat_absorbs_then_backstop_surfaces
 
 echo "all fm-watch-triage tests passed"
