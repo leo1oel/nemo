@@ -650,6 +650,11 @@ exclude_path() {
   local rel=$1 EXCL
   EXCL=$(git -C "$WT" rev-parse --git-path info/exclude 2>/dev/null || true)
   [ -n "$EXCL" ] || return 0
+  # --git-path output is relative to git's cwd ($WT via -C) whenever the git
+  # dir sits inside it; anchor it there, or this shell's own cwd receives the
+  # mkdir/append (a wrong-repo write, and a hard mkdir failure when that cwd
+  # is a linked worktree whose .git is a file).
+  case "$EXCL" in /*) ;; *) EXCL="$WT/$EXCL" ;; esac
   mkdir -p "$(dirname "$EXCL")"
   grep -qxF "$rel" "$EXCL" 2>/dev/null || echo "$rel" >> "$EXCL"
 }

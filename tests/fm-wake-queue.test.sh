@@ -6,6 +6,8 @@ WATCH="$ROOT/bin/fm-watch.sh"
 WATCH_ARM="$ROOT/bin/fm-watch-arm.sh"
 DRAIN="$ROOT/bin/fm-wake-drain.sh"
 LIB="$ROOT/bin/fm-wake-lib.sh"
+# shellcheck source=bin/fm-herdr-lib.sh
+. "$ROOT/bin/fm-herdr-lib.sh"
 TMP_ROOT=
 
 fail() {
@@ -98,6 +100,14 @@ hash_text() {
   fi
 }
 
+# fm-watch.sh's staleness hash for seeding pane bookkeeping: the shared
+# footer-excluded window (fm_herdr_above_footer, sourced above - the ticking
+# TUI footer the busy regex scans is dropped), hashed.
+stale_hash_of() {  # <pane-text>
+  printf '%s' "$1" | fm_herdr_above_footer \
+    | { if command -v md5 >/dev/null 2>&1; then md5 -q; else md5sum | cut -d' ' -f1; fi; }
+}
+
 test_concurrent_append_and_drain() {
   local dir state out1 out2 all pids i pid count unique malformed
   dir=$(make_case concurrent)
@@ -164,7 +174,7 @@ test_stale_enqueue_before_suppressor() {
   # A live task: the watcher enumerates state/*.meta and reads each by its handle.
   printf 'handle=p1\n' > "$state/$id.meta"
   key="fm-$id"
-  pane_hash=$(hash_text "idle prompt")
+  pane_hash=$(stale_hash_of "idle prompt")
   printf '%s' "$pane_hash" > "$state/.hash-$key"
   printf '1\n' > "$state/.count-$key"
   PATH="$fakebin:$PATH" FM_FAKE_PANE_CAPTURE="$capture_file" FM_STATE_OVERRIDE="$state" FM_POLL=1 FM_SIGNAL_GRACE=1 FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" > "$out" &
@@ -196,7 +206,7 @@ SH
   # No captain-relevant status file -> non-terminal stale; the signal path stays inert.
   printf 'handle=p1\nkind=ship\n' > "$state/$id.meta"
   key="fm-$id"
-  pane_hash=$(hash_text "idle building output")
+  pane_hash=$(stale_hash_of "idle building output")
   printf '%s' "$pane_hash" > "$state/.hash-$key"
   printf '1\n' > "$state/.count-$key"
   PATH="$fakebin:$PATH" FM_FAKE_PANE_CAPTURE="$capture_file" FM_STATE_OVERRIDE="$state" \
