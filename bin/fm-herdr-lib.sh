@@ -2,10 +2,12 @@
 # fm-herdr-lib.sh — shared herdr pane primitives for firstmate.
 #
 # ONE source of truth for: composer-empty (pending-input) detection, a
-# verify-and-retry-Enter submit, and pane existence + agent_status busy
-# detection. Sourced by the away-mode daemon (bin/fm-supervise-daemon.sh),
-# bin/fm-send.sh, and bin/fm-crew-state.sh so the composer/submit/busy logic
-# cannot drift between them. herdr-only — no tmux, no treehouse.
+# verify-and-retry-Enter submit, pane existence + agent_status busy detection,
+# and the TUI footer window (FM_HERDR_FOOTER_LINES and its helpers) that busy
+# detection scans and the watcher's staleness hash excludes. Sourced by the
+# away-mode daemon (bin/fm-supervise-daemon.sh), bin/fm-send.sh,
+# bin/fm-crew-state.sh, and bin/fm-watch.sh so the composer/submit/busy/footer
+# logic cannot drift between them. herdr-only — no tmux, no treehouse.
 #
 # Why this exists (incident afk-invx-i5): the daemon's old composer check only
 # recognized a BARE prompt glyph ("❯ ") at the start of a line as the empty
