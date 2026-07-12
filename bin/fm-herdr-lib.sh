@@ -50,6 +50,23 @@
 # bare "esc to interrupt" misses.
 FM_HERDR_BUSY_REGEX_DEFAULT='esc to interrupt|thinking with'
 
+# Footer window: the trailing FM_HERDR_FOOTER_LINES non-blank lines of a pane
+# tail, where every verified harness renders its TUI footer (busy indicator,
+# elapsed-time / rate-limit tickers). Busy detection scans EXACTLY this window
+# and the staleness hash (fm-watch.sh stale_hash) excludes EXACTLY this window;
+# the two must stay the same line set, so every site reads it through these
+# helpers instead of hard-coding the size.
+FM_HERDR_FOOTER_LINES=6
+
+fm_herdr_footer_window() {  # stdin: pane tail -> the footer window's lines
+  grep -v '^[[:space:]]*$' | tail -n "$FM_HERDR_FOOTER_LINES"
+}
+
+fm_herdr_above_footer() {  # stdin: pane tail -> non-blank lines above the footer window
+  grep -v '^[[:space:]]*$' \
+    | awk -v n="$FM_HERDR_FOOTER_LINES" '{ l[NR] = $0 } END { for (i = 1; i <= NR - n; i++) print l[i] }'
+}
+
 # Box-drawing / pipe glyphs Claude (and other harnesses) use to draw the
 # composer border. Stripped from a candidate line before deciding empty vs
 # pending. Literal-string substitution (bash 3.2 safe, locale-independent — no
@@ -266,6 +283,6 @@ fm_herdr_pane_is_busy() {  # <handle>
   esac
   # idle/blocked/done and unknown/empty alike -> footer-regex corroboration.
   tail40=$(herdr pane read "$h" --source visible --lines 40 2>/dev/null) || return 1
-  printf '%s' "$tail40" | grep -v '^[[:space:]]*$' | tail -6 \
+  printf '%s' "$tail40" | fm_herdr_footer_window \
     | grep -qiE "${FM_BUSY_REGEX:-$FM_HERDR_BUSY_REGEX_DEFAULT}"
 }

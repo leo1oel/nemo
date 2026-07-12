@@ -39,6 +39,11 @@ mkdir -p "$STATE"
 # daemon uses, so the triage policy has one definition.
 # shellcheck source=bin/fm-classify-lib.sh
 . "$SCRIPT_DIR/fm-classify-lib.sh"
+# Shared footer-window helpers (FM_HERDR_FOOTER_LINES, fm_herdr_footer_window,
+# fm_herdr_above_footer): the busy check and the staleness hash below must use
+# the same line set, and this library is its single definition.
+# shellcheck source=bin/fm-herdr-lib.sh
+. "$SCRIPT_DIR/fm-herdr-lib.sh"
 
 WATCH_LOCK="$STATE/.watch.lock"
 WATCH_PATH="$SCRIPT_DIR/fm-watch.sh"
@@ -186,16 +191,24 @@ hash_pane() {
   if command -v md5 >/dev/null 2>&1; then md5 -q; else md5sum | cut -d' ' -f1; fi
 }
 
-# Staleness hash: the pane tail EXCLUDING the TUI footer - the last 6 non-blank
-# lines, the same window the busy regex scans (see the stale loop below). The
-# footer's elapsed-time / rate-limit counters tick on every render even while
-# the pane is otherwise idle, so a footer-included hash makes an idle pane look
-# freshly active, then freshly DISTINCTLY stale, on every tick - defeating the
-# once-per-hash stale suppression with an endless stream of one-shot stale
-# wakes. Blank lines are dropped first so the excluded window is the same set
-# of lines the busy check reads. Busy detection itself still reads the footer.
+# Staleness hash: the pane tail EXCLUDING the TUI footer - the last
+# FM_HERDR_FOOTER_LINES non-blank lines, the same window the busy regex scans
+# (see the stale loop below; fm-herdr-lib.sh is the single definition of that
+# window). The footer's elapsed-time / rate-limit counters tick on every render
+# even while the pane is otherwise idle, so a footer-included hash makes an idle
+# pane look freshly active, then freshly DISTINCTLY stale, on every tick -
+# defeating the once-per-hash stale suppression with an endless stream of
+# one-shot stale wakes. Blank lines are dropped first so the excluded window is
+# the same set of lines the busy check reads. Busy detection itself still reads
+# the footer.
+#
+# Panes with <= FM_HERDR_FOOTER_LINES non-blank lines hash to a constant (empty
+# input) by design: such short panes are footer-dominated, so any fallback that
+# hashes more of them would reintroduce the footer-tick false-wake churn this
+# function exists to remove, and the signal-scan and heartbeat layers still
+# catch captain-relevant statuses for those panes.
 stale_hash() {  # stdin: pane tail
-  grep -v '^[[:space:]]*$' | awk '{ l[NR] = $0 } END { for (i = 1; i <= NR - 6; i++) print l[i] }' | hash_pane
+  fm_herdr_above_footer | hash_pane
 }
 
 # Exit reporting a wake. Consecutive heartbeats with no other wake in between
@@ -427,10 +440,11 @@ EOF
     if [ "$h" = "$prev" ]; then
       n=$(( $(cat "$cf" 2>/dev/null || echo 0) + 1 ))
       echo "$n" > "$cf"
-      # Busy match runs on the last 6 non-blank lines only (the TUI footer area,
-      # where every verified harness renders its busy indicator) so busy-looking
-      # strings in displayed content cannot suppress stale detection.
-      if [ "$n" -ge 2 ] && ! printf '%s' "$tail40" | grep -v '^[[:space:]]*$' | tail -6 | grep -qiE "$BUSY_REGEX"; then
+      # Busy match runs on the shared footer window only (the TUI footer area,
+      # where every verified harness renders its busy indicator - the same line
+      # set stale_hash excludes) so busy-looking strings in displayed content
+      # cannot suppress stale detection.
+      if [ "$n" -ge 2 ] && ! printf '%s' "$tail40" | fm_herdr_footer_window | grep -qiE "$BUSY_REGEX"; then
         # The pane is idle/stale at hash $h. Triage decides whether this wakes
         # firstmate. Detection itself is unchanged from above.
         if afk_present; then

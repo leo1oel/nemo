@@ -6,6 +6,8 @@ WATCH="$ROOT/bin/fm-watch.sh"
 WATCH_ARM="$ROOT/bin/fm-watch-arm.sh"
 DRAIN="$ROOT/bin/fm-wake-drain.sh"
 LIB="$ROOT/bin/fm-wake-lib.sh"
+# shellcheck source=bin/fm-herdr-lib.sh
+. "$ROOT/bin/fm-herdr-lib.sh"
 TMP_ROOT=
 
 fail() {
@@ -98,11 +100,11 @@ hash_text() {
   fi
 }
 
-# Mirror fm-watch.sh's staleness hash for seeding pane bookkeeping: strip blank
-# lines, drop the trailing 6-line footer window (the ticking TUI footer the
-# busy regex scans), hash the rest.
+# fm-watch.sh's staleness hash for seeding pane bookkeeping: the shared
+# footer-excluded window (fm_herdr_above_footer, sourced above - the ticking
+# TUI footer the busy regex scans is dropped), hashed.
 stale_hash_of() {  # <pane-text>
-  printf '%s' "$1" | grep -v '^[[:space:]]*$' | awk '{ l[NR] = $0 } END { for (i = 1; i <= NR - 6; i++) print l[i] }' \
+  printf '%s' "$1" | fm_herdr_above_footer \
     | { if command -v md5 >/dev/null 2>&1; then md5 -q; else md5sum | cut -d' ' -f1; fi; }
 }
 
