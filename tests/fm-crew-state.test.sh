@@ -84,6 +84,9 @@ case "${1:-}" in
     shift
     if [ "${1:-}" = --run ]; then printf '%s\n' "${FM_FAKE_AXI_STATUS_RUN:-}"
     else printf '%s\n' "${FM_FAKE_AXI_STATUS:-}"; fi ;;
+  logs)
+    # `axi logs --step ci --run <id>`: serve the fake ci step log tail.
+    printf '%s\n' "${FM_FAKE_CI_LOG:-}" ;;
   '') printf '%s\n' "${FM_FAKE_AXI_LIST:-}" ;;
 esac
 exit 0
@@ -144,10 +147,11 @@ reset_fakes() {
   FM_FAKE_AXI_STATUS_RUN=""
   FM_FAKE_AXI_LIST=""
   FM_FAKE_RUNS_LIST=""
+  FM_FAKE_CI_LOG=""
   FM_FAKE_BUSY=0
   FM_FAKE_PANE_MISSING=0
   FM_FAKE_PANE_FOOTER_BUSY=0
-  export FM_FAKE_AXI_STATUS FM_FAKE_AXI_STATUS_RUN FM_FAKE_AXI_LIST FM_FAKE_RUNS_LIST FM_FAKE_BUSY FM_FAKE_PANE_MISSING FM_FAKE_PANE_FOOTER_BUSY
+  export FM_FAKE_AXI_STATUS FM_FAKE_AXI_STATUS_RUN FM_FAKE_AXI_LIST FM_FAKE_RUNS_LIST FM_FAKE_CI_LOG FM_FAKE_BUSY FM_FAKE_PANE_MISSING FM_FAKE_PANE_FOOTER_BUSY
 }
 
 # --- run-object fixtures (TOON, as `no-mistakes axi status` emits) -----------
@@ -239,6 +243,30 @@ run:
   pr: "https://github.com/o/r/pull/1"
   findings: none
 outcome: passed
+EOF
+}
+
+# A run parked on a running ci step: the pipeline is monitoring the open PR's
+# checks (no outcome yet). status alone reads working; the ci step's OWN log is
+# what distinguishes green-and-review-ready from still-waiting-on-checks (#297).
+run_ci_running() {  # <branch>
+  cat <<EOF
+run:
+  id: "01RUN"
+  branch: $1
+  status: ci
+  head: "abc1234"
+  pr: "https://github.com/o/r/pull/1"
+  findings: none
+  steps[8]{step,status,findings,duration_ms}:
+    intent,completed,0,0
+    review,completed,0,0
+    test,completed,0,0
+    document,completed,0,0
+    lint,completed,0,0
+    push,completed,0,0
+    pr,completed,0,0
+    ci,running,0,0
 EOF
 }
 
@@ -385,6 +413,45 @@ test_ci_ready_done_log_beats_monitoring_run() {
   assert_contains "$out" "checks green" "ci-ready detail preserves the report"
   assert_not_contains "$out" "state: working" "ci-ready is not hidden by monitoring run"
   pass "ci-ready status log beats monitoring run"
+}
+
+# (d') #297: a running ci step whose OWN log says checks passed -> done, even
+# with no "checks green" status-log line (a merge-deferred repo never writes one
+# while the ci step sits at running the whole monitor phase).
+test_ci_step_log_green_surfaces_done() {
+  reset_fakes
+  local d; d=$(new_case ci-log-green)
+  make_repo_on_branch "$d/wt" fm/feat-cg
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/feat-cg.meta" "handle=p1" "worktree=$d/wt" "kind=ship"
+  # No "checks green" status-log line at all.
+  printf 'working: pushed, monitoring CI\n' > "$d/state/feat-cg.status"
+  FM_FAKE_AXI_STATUS="$(run_ci_running fm/feat-cg)"
+  FM_FAKE_CI_LOG="monitoring PR #1
+all CI checks passed - still monitoring until merged or closed"
+  local out; out=$(run_crew_state "$d" feat-cg)
+  assert_contains "$out" "state: done" "green ci step log -> done"
+  assert_contains "$out" "source: run-step" "ci-log green comes from the run-step path"
+  assert_contains "$out" "checks green" "detail reports the review-ready PR"
+  pass "a running ci step with a green ci log surfaces done via the ci log (#297)"
+}
+
+# Negative: a running ci step whose log says checks are still running stays
+# working, so a genuinely-not-green PR is never surfaced as ready.
+test_ci_step_log_not_green_stays_working() {
+  reset_fakes
+  local d; d=$(new_case ci-log-waiting)
+  make_repo_on_branch "$d/wt" fm/feat-cw
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/feat-cw.meta" "handle=p1" "worktree=$d/wt" "kind=ship"
+  printf 'working: pushed, monitoring CI\n' > "$d/state/feat-cw.status"
+  FM_FAKE_AXI_STATUS="$(run_ci_running fm/feat-cw)"
+  FM_FAKE_CI_LOG="monitoring PR #1
+CI checks running"
+  local out; out=$(run_crew_state "$d" feat-cw)
+  assert_contains "$out" "state: working" "not-green ci log stays working"
+  assert_not_contains "$out" "state: done" "a still-running ci log must not surface done"
+  pass "a running ci step whose log is not green stays working (#297)"
 }
 
 # (d) terminal run-step is authoritative
@@ -668,6 +735,8 @@ test_genuine_parked_not_superseded
 test_scalar_gate_parked_not_superseded
 test_gate_block_parked_not_superseded
 test_ci_ready_done_log_beats_monitoring_run
+test_ci_step_log_green_surfaces_done
+test_ci_step_log_not_green_stays_working
 test_terminal_passed
 test_terminal_failed
 test_cross_branch_attribution_via_runs

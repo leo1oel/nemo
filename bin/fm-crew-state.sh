@@ -22,7 +22,11 @@
 #   2. Matching no-mistakes run for this crew's branch, active or terminal?
 #      The run-step is AUTHORITATIVE: running/fixing -> working, ci -> working,
 #      awaiting_approval/fix_review -> parked (with gate findings), terminal
-#      passed/checks-passed -> done, failed/cancelled -> failed.
+#      passed/checks-passed -> done, failed/cancelled -> failed. A run still on
+#      a running ci step is reconciled against the ci step's OWN log (axi logs):
+#      a merge-deferred repo keeps that step at running the whole monitor phase,
+#      so a green, review-ready PR is surfaced done from the ci log rather than
+#      reading as "validating" forever (#297).
 #   3. Reconcile the status log: if its last line says needs-decision/blocked but
 #      the run-step shows the run moved on, the log is deterministically stale and
 #      is flagged superseded. A genuinely parked run plus a needs-decision log
@@ -223,6 +227,51 @@ log_reports_ci_ready() {
     *) return 1 ;;
   esac
 }
+
+# Status of the ci step's own row in the run's steps[] table (running|fixing),
+# empty when the ci step is not at one of those. Distinct from the run's
+# top-level status.
+nm_ci_step_status() {
+  local row rest
+  row=$(printf '%s\n' "$RUN_OUT" | grep -E '^[[:space:]]*ci,[[:space:]]*"?(running|fixing)"?[[:space:]]*,' | head -1)
+  [ -n "$row" ] || return 0
+  row=$(trim "$row")
+  rest=${row#*,}
+  strip_quotes "$(trim "${rest%%,*}")"
+}
+
+# The effective ci-step status, reconciling the run's top status with the step
+# row: a run whose top status is fixing counts the ci step as fixing; else the
+# ci step's own row wins; else a top status of ci means the ci step is running.
+nm_effective_ci_step_status() {  # <run-top-status>
+  local run_status=${1:-} step_status
+  if [ "$run_status" = fixing ]; then printf 'fixing'; return 0; fi
+  step_status=$(nm_ci_step_status)
+  if [ -n "$step_status" ]; then printf '%s' "$step_status"; return 0; fi
+  if [ "$run_status" = ci ]; then printf 'running'; fi
+}
+
+# CI check state read from the ci step's OWN log (axi logs --step ci), not from
+# `axi status`. A repo that defers merge to the captain keeps the ci step at
+# status=running for the entire monitor phase, so status alone cannot tell
+# "waiting on checks" from "checks green, only waiting on merge/close". The ci
+# log is append-only, so the MOST RECENT recognized marker is current. Prints
+# green | not-ready | unknown.
+nm_ci_checks_state() {
+  local run_id log_tail marker
+  run_id=$(strip_quotes "$(nm_field id)")
+  [ -n "$run_id" ] || { printf 'unknown'; return; }
+  log_tail=$(nm_run axi logs --step ci --run "$run_id") || true
+  [ -n "$log_tail" ] || { printf 'unknown'; return; }
+  marker=$(printf '%s\n' "$log_tail" \
+    | grep -E 'CI checks passed|no CI checks reported - still monitoring|no CI checks reported yet|checks failed|issues detected|CI checks running|base branch advanced.*re-arming CI monitor timeout' \
+    | tail -1)
+  case "$marker" in
+    *"checks passed"*|*"no CI checks reported - still monitoring"*) printf 'green' ;;
+    *"no CI checks reported yet"*|*"checks failed"*|*"issues detected"*|*"CI checks running"*|*"base branch advanced"*"re-arming CI monitor timeout"*) printf 'not-ready' ;;
+    *) printf 'unknown' ;;
+  esac
+}
 # Most recent run id whose branch matches, from the `no-mistakes axi` run list.
 # Coarse run status for a branch from `no-mistakes runs --limit N`. The bare
 # `axi` list shows only the most recent ~10 runs, so an older run for this
@@ -336,6 +385,18 @@ if [ "$HAVE_RUN" = 1 ]; then
       *)              RUN_STATE=working; RUN_DETAIL="run active ($status)" ;;
     esac
   fi
+  fi
+
+  # #297: when the run is still "working" on a running ci step, read the ci
+  # step's own log for the checks-passed marker and surface done - a
+  # merge-deferred repo keeps that step at running for the whole monitor phase,
+  # so `axi status` alone would leave a green, review-ready PR reading as
+  # "validating (ci running)" forever. Full-source runs only (a coarse run has
+  # no step detail or resolvable ci log).
+  if [ "$RUN_STATE" = working ] && [ "$RUN_SOURCE" = full ] \
+     && [ "$(nm_effective_ci_step_status "${status:-}")" = running ] \
+     && [ "$(nm_ci_checks_state)" = green ]; then
+    emit "done" run-step "checks green: PR ready for review (still monitoring for merge/close)"
   fi
 
   if [ "$RUN_STATE" = working ] && log_reports_ci_ready; then
