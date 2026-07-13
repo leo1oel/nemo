@@ -70,14 +70,27 @@ test_loop_guard_allows() {
   pass "stop_hook_active bounds blocking to once per turn"
 }
 
-test_non_primary_scopes_noop() {
+test_secondmate_home_is_guarded() {
   local d rc
-  d=$(make_case secondmate-home)
+  # A seeded secondmate home runs its own watcher, so its own session must NOT
+  # end a turn blind (#505): tasks in flight + no beacon must block.
+  d=$(make_case secondmate-home-blind)
   add_task "$d" t1
   printf 'sm-x' > "$d/root/.fm-secondmate-home"
   set +e; run_guard "$d" "$PAYLOAD_IDLE"; rc=$?; set -e
-  [ "$rc" -eq 0 ] || fail "secondmate home must be a no-op, got $rc"
+  [ "$rc" -eq 2 ] || fail "secondmate home with tasks in flight + no beacon must block, got $rc"
+  grep -qF 'TURN WOULD END BLIND' "$d/stderr" || fail "secondmate block banner missing"
+  # A fresh beacon in its own state dir allows the turn end.
+  touch "$d/root/state/.last-watcher-beat"
+  set +e; run_guard "$d" "$PAYLOAD_IDLE"; rc=$?; set -e
+  [ "$rc" -eq 0 ] || fail "secondmate home with a fresh beacon must allow, got $rc"
+  pass "a secondmate's own session is guarded like the primary (#505)"
+}
 
+test_child_worktree_exempt() {
+  local d rc
+  # A crewmate/scout worktree of firstmate-on-itself has no watcher of its own
+  # (linked worktree, no secondmate marker), so it stays a silent no-op.
   d=$(make_case linked-worktree)
   add_task "$d" t1
   git -C "$d/root" worktree add -q "$d/wt" -b side >/dev/null 2>&1
@@ -86,8 +99,8 @@ test_non_primary_scopes_noop() {
   ln -sf "$ROOT/bin/fm-turnend-guard.sh" "$d/wt/bin/fm-turnend-guard.sh"
   printf 'handle=p1\n' > "$d/wt/state/t2.meta"
   set +e; printf '%s' "$PAYLOAD_IDLE" | "$d/wt/bin/fm-turnend-guard.sh" 2>/dev/null; rc=$?; set -e
-  [ "$rc" -eq 0 ] || fail "linked worktree must be a no-op, got $rc"
-  pass "secondmate homes and linked worktrees are silent no-ops"
+  [ "$rc" -eq 0 ] || fail "child crew/scout worktree must be a no-op, got $rc"
+  pass "a child crew/scout worktree (no marker, linked) stays exempt"
 }
 
 test_no_tasks_allows() {
@@ -154,7 +167,8 @@ test_settings_json_anchored() {
 
 test_empty_payload_allows
 test_loop_guard_allows
-test_non_primary_scopes_noop
+test_secondmate_home_is_guarded
+test_child_worktree_exempt
 test_no_tasks_allows
 test_fresh_beacon_allows
 test_stale_beacon_blocks
