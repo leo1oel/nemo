@@ -5,8 +5,9 @@ Read each script's header comment before first use.
 
 | Script                   | Description                                                                                                         |
 | ------------------------ | ------------------------------------------------------------------------------------------------------------------- |
-| `fm-fleet-sync.sh`       | Fetch clones, fast-forward safe default-branch states, self-heal clean detached ancestor drift, report unsafe drift as `STUCK:`, and safely prune branches whose remote is gone |
+| `fm-fleet-sync.sh`       | Fetch clones (recovering from an orphaned `packed-refs.lock` left by a killed ref rewrite), fast-forward safe default-branch states, self-heal clean detached ancestor drift, report unsafe drift as `STUCK:`, and safely prune branches whose remote is gone |
 | `fm-ff-lib.sh`           | Shared fast-forward machinery for the spawn-time secondmate sync                                                   |
+| `fm-lock-lib.sh`         | Shared "is this git lock provably abandoned?" proof (exists + no lsof holder + mtime past threshold); fails safe on any uncertainty |
 | `fm-backlog-handoff.sh`  | Move already-judged in-scope queued backlog items from the main home into a seeded secondmate home                  |
 | `fm-brief.sh`            | Scaffold a ship brief, a report-only scout brief with `--scout`, or a secondmate charter with `--secondmate`        |
 | `fm-ensure-agents-md.sh` | Ensure project `AGENTS.md` is the real memory file and `CLAUDE.md` symlinks to it                                   |
