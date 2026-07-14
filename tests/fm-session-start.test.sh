@@ -61,12 +61,23 @@ SH
 echo "guard: stub advisory" >&2
 exit 0
 SH
-  # Stub herdr: pane get succeeds only for the id in FM_TEST_LIVE_PANE.
+  # Stub herdr. pane get: FM_TEST_LIVE_PANE succeeds (with an agent_status so
+  # agent-liveness reads alive); FM_TEST_BARESHELL_PANE succeeds but returns a
+  # pane WITHOUT agent_status (a dead-shell secondmate); anything else is a
+  # structurally-gone pane (pane_not_found).
   cat > "$fakebin/herdr" <<'SH'
 #!/usr/bin/env bash
 case "${1:-} ${2:-}" in
   "pane get")
-    [ "${3:-}" = "${FM_TEST_LIVE_PANE:-}" ] && exit 0
+    if [ "${3:-}" = "${FM_TEST_LIVE_PANE:-}" ]; then
+      printf '{"result":{"pane":{"pane_id":"%s","agent_status":"idle"}}}\n' "${3:-}"
+      exit 0
+    fi
+    if [ "${3:-}" = "${FM_TEST_BARESHELL_PANE:-}" ]; then
+      printf '{"result":{"pane":{"pane_id":"%s"}}}\n' "${3:-}"
+      exit 0
+    fi
+    echo '{"error":{"code":"pane_not_found"}}'
     exit 1
     ;;
 esac
@@ -83,6 +94,7 @@ run_session_start() {  # <case-dir>
   FM_TEST_DRAIN_MARK="$d/drain.mark" \
   FM_TEST_GUARD_MARK="$d/guard.mark" \
   FM_TEST_LIVE_PANE="${FM_TEST_LIVE_PANE:-}" \
+  FM_TEST_BARESHELL_PANE="${FM_TEST_BARESHELL_PANE:-}" \
     "$d/root/bin/fm-session-start.sh"
 }
 
@@ -148,6 +160,29 @@ EOF
   pass "a dead pane is reported as a dead endpoint"
 }
 
+test_secondmate_agent_liveness() {
+  local d out
+  d=$(make_case sm-liveness 0)
+  cat > "$d/root/state/sm-live.meta" <<EOF
+handle=p-live
+kind=secondmate
+EOF
+  cat > "$d/root/state/sm-husk.meta" <<EOF
+handle=p-husk
+kind=secondmate
+EOF
+  # p-live: pane with agent_status -> alive. p-husk: pane present but NO
+  # agent_status (dead-shell secondmate) -> flagged DEAD for respawn even though
+  # its pane exists.
+  out=$(FM_TEST_LIVE_PANE=p-live FM_TEST_BARESHELL_PANE=p-husk run_session_start "$d" 2>&1) \
+    || fail "sm-liveness: script failed"
+  printf '%s' "$out" | grep -qF 'endpoint: alive (handle=p-live, agent live)' \
+    || fail "sm-liveness: live secondmate agent not reported alive"
+  printf '%s' "$out" | grep -qF 'endpoint: DEAD - respawn this secondmate (handle=p-husk' \
+    || fail "sm-liveness: dead-shell secondmate (pane present, no agent) not flagged for respawn"
+  pass "a secondmate is judged by agent liveness, so a dead bare shell is flagged despite a live pane"
+}
+
 test_afk_flips_next_step() {
   local d out
   d=$(make_case afk 0)
@@ -181,5 +216,6 @@ test_dispatch_diagnostics() {
 test_locked_full_digest
 test_read_only_skips_drain
 test_dead_endpoint_reported
+test_secondmate_agent_liveness
 test_afk_flips_next_step
 test_dispatch_diagnostics

@@ -260,6 +260,41 @@ fm_herdr_pane_agent_status() {  # <handle>
   herdr pane get "$1" 2>/dev/null | grep -o '"agent_status":"[^"]*"' | head -1 | cut -d'"' -f4
 }
 
+# fm_herdr_agent_alive: CONFIDENT liveness of a real harness AGENT under a pane,
+# distinct from mere pane presence (fm_herdr_pane_exists). A secondmate whose
+# agent EXITS leaves its herdr pane alive as a bare shell with no agent_status,
+# which pane-presence alone reads as alive - so the watcher (which exempts
+# secondmates from stale-pane detection) and session-start recovery never notice
+# a dead-shell secondmate. Prints exactly one of:
+#   alive   - the pane exists and reports a real agent_status
+#             (working/idle/blocked/done): a live registered agent.
+#   dead    - the pane is structurally gone, OR it exists but carries no
+#             agent_status at all (an agent-less bare shell, exactly the shape a
+#             dead secondmate leaves behind).
+#   unknown - herdr could not be read for any other reason (unreachable,
+#             transient): fail-safe, callers must NEVER respawn on unknown.
+fm_herdr_agent_alive() {  # <handle> -> alive|dead|unknown
+  local h=${1:-} raw rc st
+  [ -n "$h" ] || { printf 'unknown'; return 0; }
+  raw=$(herdr pane get "$h" 2>/dev/null); rc=$?
+  if [ "$rc" -ne 0 ]; then
+    # Distinguish a structurally-gone pane (confidently dead) from any other
+    # herdr failure, which must stay unknown so a live agent is never respawned.
+    case "$raw" in
+      *pane_not_found*|*'"code":"not_found"'*) printf 'dead' ;;
+      *) printf 'unknown' ;;
+    esac
+    return 0
+  fi
+  [ -n "$raw" ] || { printf 'unknown'; return 0; }
+  st=$(printf '%s' "$raw" | grep -o '"agent_status":"[^"]*"' | head -1 | cut -d'"' -f4)
+  case "$st" in
+    working|idle|blocked|done) printf 'alive' ;;
+    '') printf 'dead' ;;
+    *)  printf 'unknown' ;;
+  esac
+}
+
 # fm_herdr_pane_is_busy: 0 if the pane's agent is currently working. PRIMARY
 # signal is herdr's agent_status: `working` alone is trusted outright — it
 # covers the thinking spinner, which the busy footer misses (Claude shows
