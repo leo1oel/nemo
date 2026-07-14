@@ -92,6 +92,60 @@ test_landed_rollup() {
   pass "bearings-snapshot: rolls up merged PRs and completed scouts from the Done backlog"
 }
 
+# Seed a valid seeded secondmate home with a backlog read from stdin.
+make_secondmate_home() {  # <home> <id>  (backlog on stdin)
+  local home=$1 id=$2
+  mkdir -p "$home/state" "$home/data" "$home/bin"
+  printf '%s' "$id" > "$home/.fm-secondmate-home"
+  printf '# secondmate home\n' > "$home/AGENTS.md"
+  cat > "$home/data/backlog.md"
+  printf '%s\n' "$home"
+}
+
+register_secondmate() {  # <main-home> <id> <home-path>
+  local main=$1 id=$2 home=$3
+  printf 'kind=secondmate\nhome=%s\nhandle=fmpane-%s\n' "$home" "$id" > "$main/state/$id.meta"
+  printf -- '- %s - scope (home: %s; scope: work; projects: demo; added 2026-07-14)\n' "$id" "$home" >> "$main/data/secondmates.md"
+}
+
+# Bearings surfaces each registered secondmate's authoritative home state: its
+# in-flight/held work and Done land under the secondmate's owner, and a home that
+# could not be read shows as state unknown with an omitted disclosure. This uses the
+# deterministic externally_held / unknown states (no live child backend needed).
+test_bearings_secondmate_surfacing() {
+  local main sm out
+  main="$TMP/main-sm"; mkdir -p "$main/state" "$main/data"
+  printf '## In flight\n\n## Queued\n\n## Done\n' > "$main/data/backlog.md"
+  : > "$main/data/secondmates.md"
+  sm=$(make_secondmate_home "$TMP/sm-good" mate-x <<'MD'
+## In flight
+
+## Queued
+- [ ] q1 - a queued feature (repo: demo) blocked-by: dep7 - waits on dep7
+
+## Done
+- [x] mate-done - a merge the mate managed - https://github.com/o/r/pull/9 (repo: demo) (merged 2026-07-12)
+MD
+)
+  register_secondmate "$main" mate-x "$sm"
+  register_secondmate "$main" mate-bad "$TMP/no-such-home"
+  out=$(run_bearings "$main" -- --json) || fail "bearings failed: $out"
+  printf '%s' "$out" | jq -e 'has("secondmates")' >/dev/null \
+    || fail "bearings must project a secondmates surface: $out"
+  printf '%s' "$out" | jq -e '.secondmates[] | select(.id == "mate-x") | .state == "externally_held"' >/dev/null \
+    || fail "a valid secondmate home must surface its authoritative state: $out"
+  printf '%s' "$out" | jq -e '.secondmates[] | select(.id == "mate-bad") | .state == "unknown" and (.reason | test("invalid home"))' >/dev/null \
+    || fail "an unreadable secondmate home must surface as unknown: $out"
+  printf '%s' "$out" | jq -e '.gates[] | select(.id == "q1") | .owner == "mate-x"' >/dev/null \
+    || fail "a secondmate's queued item must surface as a gate owned by that secondmate: $out"
+  printf '%s' "$out" | jq -e '.landed[] | select(.id == "mate-done") | .owner == "mate-x"' >/dev/null \
+    || fail "a secondmate's Done must land under that secondmate's owner: $out"
+  printf '%s' "$out" | jq -e '[.omitted[] | select(.surface | test("secondmate home state unavailable"))] | length == 1' >/dev/null \
+    || fail "an unreadable secondmate home must be disclosed in omitted: $out"
+  pass "bearings-snapshot: surfaces each secondmate's authoritative home state, ownership, and unreadable homes"
+}
+
 test_projection_schema
 test_local_only_default
 test_landed_rollup
+test_bearings_secondmate_surfacing

@@ -20,6 +20,7 @@ It never tears down a task, merges a PR, dispatches new work, or mutates any tas
    Do not hand-probe the snapshot schema and do not make ad-hoc `gh`/`gh-axi` calls to assemble fleet facts; this command already assembles them.
    The command's header and `--help` output own its exact fields, bounds, opt-ins, and output contract.
    When the captain asks to include PRs, use the command's live-PR opt-in (`--include-prs`); otherwise keep the default local-only read.
+   For every registered secondmate, the command derives that secondmate's state from its OWN home and surfaces it (its `secondmates` rows, plus its active child work, open decisions, and queued items tagged with that secondmate as owner); treat that as authoritative and fold each owner-tagged item into the same four sections, and read a secondmate whose home could not be read as an unknown, disclosed in `omitted`, rather than as settled.
    If the command is unavailable, fall back to `bin/fm-fleet-snapshot.sh --json` and `bin/fm-crew-state.sh <id>`; never infer current state from a raw `tail` of `state/<id>.status`, which is append-only wake-event history whose last line goes stale.
    A queued item under `gates` only becomes "next work" when its blocker is gone and its time/date gate has arrived; until then it stays queued with the reason.
 
