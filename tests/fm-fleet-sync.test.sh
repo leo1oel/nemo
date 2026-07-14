@@ -253,6 +253,74 @@ test_no_origin_skipped() {
   pass "no-origin clone is skipped (benign), not flagged STUCK"
 }
 
+# run_sync_err <home> [args...]: like run_sync but returns combined stdout+stderr,
+# so the packed-refs recovery messages (which go to stderr) are visible.
+run_sync_err() {
+  local home=$1
+  shift
+  FM_HOME="$home" FM_ROOT_OVERRIDE="$ROOT" "$ROOT/bin/fm-fleet-sync.sh" "$@" 2>&1
+}
+
+# #453: a git ref rewrite killed mid-write can strand a .git/packed-refs.lock
+# that fails every later fetch that must rewrite packed-refs (e.g. pruning a
+# packed remote-tracking ref). fleet-sync retries, then removes a PROVABLY-STALE
+# lock (old mtime, no live holder) and completes the sync.
+test_packed_refs_lock_recovered_when_stale() {
+  local home clone out
+  command -v lsof >/dev/null 2>&1 || { pass "packed-refs recovery test skipped (no lsof)"; return; }
+  home=$(new_home)
+  clone=$(build_pair "$home" prlock)
+  # Give the clone a packed remote-tracking ref to prune: branch on origin,
+  # fetch it, pack all refs, then delete it on origin so the next prune must
+  # rewrite the packed-refs file (which is what contends packed-refs.lock).
+  git -C "$home/work-prlock" branch feature
+  git -C "$home/work-prlock" push -q origin feature
+  git -C "$clone" fetch -q origin
+  git -C "$clone" pack-refs --all
+  git -C "$home/work-prlock" push -q origin :feature
+  # Strand a packed-refs.lock with no holder; age threshold 0 makes it provably
+  # stale immediately (the age check exists only to skip a just-created lock).
+  : > "$clone/.git/packed-refs.lock"
+
+  out=$(FM_FLEET_SYNC_PACKED_REFS_LOCK_AGE_SECS=0 \
+        FM_FLEET_SYNC_PACKED_REFS_LOCK_RETRIES=1 \
+        FM_FLEET_SYNC_PACKED_REFS_LOCK_RETRY_WAIT_SECS=0.1 \
+        run_sync_err "$home" "$clone")
+
+  assert_contains "$out" "removed provably-stale packed-refs lock" "stale packed-refs lock is removed"
+  assert_not_contains "$out" "skipped: fetch failed" "recovered fetch is not reported as a failed skip"
+  [ ! -e "$clone/.git/packed-refs.lock" ] || fail "packed-refs lock still present after recovery"
+  [ -z "$(git -C "$clone" for-each-ref refs/remotes/origin/feature 2>/dev/null)" ] \
+    || fail "origin/feature was not pruned, so the fetch did not actually complete"
+  pass "a stale packed-refs lock is cleared and the fetch recovers (#453)"
+}
+
+# A packed-refs lock held by a LIVE process must never be removed.
+test_packed_refs_lock_live_holder_left_untouched() {
+  local home clone out
+  command -v lsof >/dev/null 2>&1 || { pass "packed-refs live-holder test skipped (no lsof)"; return; }
+  home=$(new_home)
+  clone=$(build_pair "$home" prlive)
+  git -C "$home/work-prlive" branch feature
+  git -C "$home/work-prlive" push -q origin feature
+  git -C "$clone" fetch -q origin
+  git -C "$clone" pack-refs --all
+  git -C "$home/work-prlive" push -q origin :feature
+  # This test process holds the lock file open on fd 9, so lsof sees a live
+  # holder and the lock is NOT provably stale.
+  exec 9>"$clone/.git/packed-refs.lock"
+
+  out=$(FM_FLEET_SYNC_PACKED_REFS_LOCK_AGE_SECS=0 \
+        FM_FLEET_SYNC_PACKED_REFS_LOCK_RETRIES=1 \
+        FM_FLEET_SYNC_PACKED_REFS_LOCK_RETRY_WAIT_SECS=0.1 \
+        run_sync_err "$home" "$clone")
+  exec 9>&-
+
+  assert_contains "$out" "not provably stale" "a live-held packed-refs lock is left in place"
+  [ -e "$clone/.git/packed-refs.lock" ] || fail "a live-held packed-refs lock must not be removed"
+  pass "a packed-refs lock with a live holder is never removed (#453)"
+}
+
 test_whole_fleet_form() {
   local home behind current out
   home=$(new_home)
@@ -278,6 +346,8 @@ test_diverged_is_stuck_untouched
 test_on_default_clean_behind_fast_forwards
 test_already_current_unchanged
 test_no_origin_skipped
+test_packed_refs_lock_recovered_when_stale
+test_packed_refs_lock_live_holder_left_untouched
 test_whole_fleet_form
 
 echo "all fm-fleet-sync tests passed"
