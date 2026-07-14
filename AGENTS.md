@@ -49,6 +49,7 @@ The tracking principle: anything shared (AGENTS.md, README.md, .tasks.toml, docs
 Commit durable changes to the shared, tracked material with terse messages.
 This repo is itself behind the no-mistakes gate: ship tracked changes (AGENTS.md, README.md, .tasks.toml, docs/, .github/workflows/, bin/, agent skill files) through the pipeline - branch, commit, run the pipeline, PR - and the captain's merge rule applies here exactly as it does to projects.
 Never add an agent name as co-author.
+Before changing any of this repo's shared tracked material, load the `firstmate-coding-guidelines` skill: it owns the knowledge-placement decision tree, the one-owner rule, AGENTS.md size discipline, the repo style rules, and this fork's port-and-PR maintenance flow.
 
 ## 2. Layout and state
 
