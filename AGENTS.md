@@ -489,6 +489,7 @@ After a background watcher exits with `signal`, `stale`, `check`, or `heartbeat`
 Never end a turn with tasks in flight and no live watcher cycle.
 If a forced restart is ever genuinely needed, use `bin/fm-watch-arm.sh --restart`, which stops only THIS home's watcher (the pid recorded in this home's `state/.watch.lock`) and starts a fresh one.
 Never `pkill -f bin/fm-watch.sh`: that pattern matches every firstmate home's watcher, including secondmate homes that run the same script, so a broad pkill from one home kills sibling homes' watchers.
+A Claude PreToolUse guard (`bin/fm-arm-pretool-check.sh`) enforces this: it denies a broad `pkill -f fm-watch` and any non-standalone watcher arm (bundled, piped, redirected, backgrounded) before it runs, and a sibling cd-guard (`bin/fm-cd-pretool-check.sh`) denies a persistent top-level `cd` in the primary checkout; both are Claude-only seatbelts wired in `.claude/settings.json` (see `docs/arm-pretool-check.md`, `docs/cd-guard.md`).
 Waiting on the watcher is intentionally silent.
 After arming it, do not send idle progress updates to the captain; wait until it returns `signal`, `stale`, `check`, or `heartbeat`, unless the captain asks for status.
 Empty polls, elapsed waiting time, and "still no change" are tool bookkeeping, not conversational progress.

@@ -13,6 +13,10 @@ Read each script's header comment before first use.
 | `fm-guard.sh`            | Warn when tasks are in flight but queued wakes are pending or the watcher is down; also alarm on a worktree tangle (primary checkout on a feature branch) |
 | `fm-tangle-lib.sh`       | Shared classifier for the worktree-tangle guard: a named non-default branch in the primary checkout                |
 | `fm-turnend-guard.sh`    | Claude Code Stop hook (tracked `.claude/settings.json`): blocks a primary turn end, once per turn, when tasks are in flight with no fresh watcher beacon (or a dead afk daemon) |
+| `fm-cd-pretool-check.sh` | Claude PreToolUse hook: denies a persistent top-level `cd`/`pushd`/`popd` in the real primary checkout before it relocates the shell; inert in a linked worktree, fails open on any uncertainty (`docs/cd-guard.md`) |
+| `fm-cd-command-policy.mjs` | Sole block/allow decision owner for the cd-guard; reuses the shared shell classifier from `fm-arm-command-policy.mjs` |
+| `fm-arm-pretool-check.sh` | Claude PreToolUse hook: denies a watcher arm that is not a standalone verified call (bundled, piped, redirected, backgrounded, nested) and a broad `pkill -f fm-watch`; fails closed on an unclassifiable protected command (`docs/arm-pretool-check.md`) |
+| `fm-arm-command-policy.mjs` | Sole owner of firstmate's shell command classification and the watcher-arm decision procedure; exports the tokenizer the cd-guard imports |
 | `fm-home-seed.sh`        | Provision a secondmate home transactionally (a herdr worktree of the repo with `-`), clone projects, initialize gates, and maintain `data/secondmates.md` |
 | `fm-session-start.sh`    | One-command session start: lock, diagnostics, wake drain (or read-only report), full context + fleet digest, and the watcher next step |
 | `fm-spawn.sh`            | Spawn one task, several `id=repo` pairs in one batch, or a persistent secondmate with `--secondmate`; records task kind; `--model`/`--effort` set the Claude launch profile, enforced as the dispatch backstop while `config/crew-dispatch.json` is active |
