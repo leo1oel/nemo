@@ -1,0 +1,88 @@
+---
+name: firstmate-coding-guidelines
+description: >-
+  Agent-only reference for changing firstmate's shared, tracked material per AGENTS.md section 1.
+  Use before editing any of that material, whether working as firstmate directly or as a crewmate briefed on a firstmate-repo task.
+  Covers the knowledge-placement decision tree, the one-owner rule for contracts, the inline-stub pattern for content moved into a skill, AGENTS.md size discipline, trigger hygiene for new skills, repo style rules (one sentence per line, plain dash, no agent co-author, shellcheck-clean scripts, colocated tests), and this fork's port-and-PR maintenance flow.
+user-invocable: false
+---
+
+# firstmate-coding-guidelines
+
+Load this before changing firstmate's shared, tracked material, as defined by `AGENTS.md` section 1.
+It exists because `AGENTS.md` bloats whenever conditional detail is added inline instead of routed to its right home.
+Applying the rules below on every change is what keeps that from happening.
+
+## Knowledge-placement decision tree
+
+Before writing a new fact anywhere in this repo, ask where it belongs, in this order.
+
+1. Does the firstmate AGENT need this on every session or every turn to operate?
+   If yes: `AGENTS.md`, inline.
+2. Does the agent need it only in a nameable situation - a spawn, a recovery, a specific wake type, a specific lifecycle step?
+   If yes: an agent-only skill under `.agents/skills/`, plus a one-line trigger pointer left inline in the relevant `AGENTS.md` section (the way `harness-adapters`, `secondmate-provisioning`, and `stuck-crewmate-recovery` are pointed to).
+3. Is it human/reference detail - a wire format, a verification record, a mechanism narrative, an incident writeup?
+   If yes: `docs/`.
+4. Is it mechanics - exact flags, exact commands, exact paths?
+   If yes: the script's own header comment plus its `--help` output, not prose in `AGENTS.md` or a skill.
+
+Stop at the first tier that answers yes.
+Do not place a fact at a more convenient tier than the one this tree gives you.
+
+## One-owner rule
+
+Every contract - a data format, a state machine, a decision procedure - is stated in full exactly once.
+Every other mention of it is a one-line cross-reference, never a restatement.
+A single deliberate one-line reinforcement at a genuine risk point is allowed, for example a "don't forget X" placed exactly where forgetting X is costly.
+Restating the contract's substance a second time is not allowed: the two copies will drift the moment only one is edited.
+When you touch a contract, grep the repo for its other mentions and update the cross-references, not duplicate the change into a second full copy.
+
+## Inline-stub pattern
+
+When content moves out of `AGENTS.md` into a skill, decide what stays behind by asking one question: what must survive with no skill loaded?
+That is the trigger condition for loading the skill, plus any safety-critical fact that fires on a wake the skill itself is not loaded for.
+Everything else - the procedure, the mechanism, the surrounding detail - moves out completely.
+Do not leave a partial restatement behind "just in case".
+A partial copy is exactly the duplication the one-owner rule forbids.
+The model to copy is `AGENTS.md` section 8's away-mode stub: it keeps only the marker format, the ownership-transfer rule, and the exit condition inline, and points everything else at the `/afk` skill.
+
+## Size discipline
+
+Apply the decision tree above to every line you are about to add to `AGENTS.md`.
+If an addition needs more than a few lines of conditional detail (detail that matters only in a specific situation) or reference detail (a wire format, an exact schema, historical rationale), you are almost certainly adding it to the wrong file.
+`AGENTS.md`'s token cost is paid by every session of every fleet member, every time, whether or not that session ever hits the situation the new lines describe.
+A skill's cost is paid only by the sessions that actually load it.
+When in doubt, write the fact into the skill or doc first, and add only the one-line trigger to `AGENTS.md`.
+
+## Trigger hygiene
+
+A new skill is dead weight if nothing loads it.
+Every new skill needs its load trigger declared inline in the relevant `AGENTS.md` operating section.
+State the trigger as a condition ("load before X", "load on Y wake"), never as a vague pointer.
+Briefs for tasks that touch firstmate's own tracked material should tell the crewmate to load this skill.
+`bin/fm-brief.sh`'s `REPO` argument is a caller-supplied string with no reliable signal that it names firstmate's own repo, unlike a project registered in `data/projects.md`, so there is no clean point inside the scaffold to detect this case automatically.
+Firstmate adds this skill's load instruction to firstmate-repo briefs by hand instead.
+
+## Repo style rules
+
+- Put one full sentence per line in tracked Markdown.
+- Never wrap multiple sentences onto one physical line.
+- Plain dash `-`, never an em dash.
+- Never add an agent name as a commit co-author.
+- `bin/*.sh` and `tests/*.sh` must pass `shellcheck` (version 0.11.0, as the CI workflow pins).
+- The lint gate is the exact command `.github/workflows/ci.yml` runs, `shellcheck bin/*.sh tests/*.sh`; run it plus every `tests/*.test.sh` locally before treating a change as done.
+- Pass the WHOLE file set to shellcheck (`bin/*.sh tests/*.sh`), not a subset, so `# shellcheck source=` directives resolve and SC1091 does not fire on a partial run.
+- Colocate tests with the existing pattern in `tests/`, name them `<subject>.test.sh`, keep each self-contained (inline `fail`/`pass`, temp-sandbox fixtures, stub `herdr`/`no-mistakes` bins), and extend an existing script rather than inventing a new runner.
+- A verification note in `docs/` records empirical facts, not assumptions; include the date, version, exact commands run, and exact output, and write incidents the same way, as evidence, not narrative alone.
+
+## Fork maintenance flow
+
+This fork (`leo1oel/nemo`, live branch `herdr-backend`) is a herdr-native, Claude-only re-implementation of upstream `firstmate`.
+Two rules govern how tracked changes reach `herdr-backend`, and they are the same gate the captain applies to any project.
+
+- **Ship through the pipeline.** Branch off `herdr-backend`, make the change, run the local gate (shellcheck plus every `tests/*.test.sh`), commit with a terse message and no agent co-author, push, and open a PR against `herdr-backend`.
+  The captain's merge rule applies here exactly as it does to projects: never merge without the captain's explicit word.
+- **The local gate is the real gate.** The CI workflow (`.github/workflows/ci.yml`) triggers only on `branches: [main]`, and the fork lives on `herdr-backend`, so CI never runs on a fork PR; running the two CI commands locally is what protects the branch.
+- **`-R leo1oel/nemo` on every `gh-axi` PR operation.** This clone has both an `origin` (the fork) and an `upstream` remote, so `gh` resolves to `upstream` and fails ("No commits between...") unless the repo is named explicitly.
+- **Track upstream by porting, not merging.** `herdr-backend` and `upstream/main` are permanently divergent; parity is maintained by re-implementing individual upstream commits adapted to the herdr-native, Claude-only backend, never by merging upstream into the fork.
+  Verify each candidate against the actual fork code before porting - the fork deliberately lacks upstream's multi-backend abstraction, multi-harness layer, X-mode, and `fm-bootstrap`, so a commit touching those is often N/A or needs real adaptation.
