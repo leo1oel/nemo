@@ -27,15 +27,18 @@
 # Distinct from the afk daemon marker, on purpose.
 # The away-mode daemon (bin/fm-supervise-daemon.sh) marks its daemon->firstmate
 # escalations with a BARE leading unit separator (FM_INJECT_MARK, ASCII 0x1f).
-# This from-firstmate marker mirrors that CONCEPT - it reuses the ASCII unit
-# separator (0x1f), which is untypable on a normal keyboard, as the "a human can
-# never forge this" guarantee - but it is a DISTINCT sequence: a human-readable
-# label FOLLOWED by the separator, never a bare leading 0x1f. The afk contract
-# keys on a LEADING 0x1f, which this marker never has, so the two cannot
-# conflate: a secondmate's own afk machinery never mistakes a from-firstmate
-# request for an internal daemon escalation, and vice versa. The visible label is
-# also what the secondmate's LLM actually reads in its pane, since the separator
-# byte itself is invisible.
+# This from-firstmate marker instead uses U+2063 INVISIBLE SEPARATOR after its
+# human-readable label. U+2063 has no normal keyboard keystroke (so a human can
+# never forge it) but travels as UTF-8 text rather than a terminal control byte.
+# The original ASCII 0x1f separator did NOT survive terminal input faithfully:
+# feeding it to a real herdr composer (herdr 0.7.3) dropped the preceding label,
+# so a secondmate received only the unmarked request and answered in chat where
+# the main firstmate never sees it - the exact stranding this marker prevents.
+# The afk contract keys on a LEADING 0x1f, while this marker begins with its
+# label and contains no 0x1f, so the two cannot conflate: a secondmate's own afk
+# machinery never mistakes a from-firstmate request for an internal daemon
+# escalation, and vice versa. The visible label is what the secondmate's LLM
+# reads in its pane; the U+2063 separator itself is invisible.
 #
 # Sourced by bin/fm-send.sh, bin/fm-brief.sh, and the tests. No side effects on
 # source. set -u / set -e safe.
@@ -45,13 +48,15 @@
 FM_FROMFIRST_LABEL='[fm-from-firstmate]'
 
 # The full marker fm-send prepends to a from-firstmate request: the label, then
-# the ASCII unit separator (0x1f) as the untypable field separator. The request
-# text follows the separator.
-FM_FROMFIRST_MARK="${FM_FROMFIRST_LABEL}"$'\x1f'
+# U+2063 INVISIBLE SEPARATOR (UTF-8 e2 81 a3) as the untypable field separator,
+# which - unlike the raw 0x1f control byte - survives a herdr composer intact.
+# The request text follows the separator.
+FM_FROMFIRST_SEPARATOR=$'\xE2\x81\xA3'
+FM_FROMFIRST_MARK="${FM_FROMFIRST_LABEL}${FM_FROMFIRST_SEPARATOR}"
 
 # fm_message_from_firstmate: 0 (true) if <message> carries the from-firstmate
-# marker - it begins with the label immediately followed by the unit separator -
-# and 1 otherwise. The unit separator is untypable, so a captain-typed message,
+# marker - it begins with the label immediately followed by U+2063 - and 1
+# otherwise. U+2063 has no normal keyboard keystroke, so a captain-typed message,
 # even one that happens to start with the label text alone, is never matched.
 fm_message_from_firstmate() {  # <message>
   case "$1" in
