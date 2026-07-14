@@ -21,6 +21,8 @@
 set -u
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# Inert normally; bypass gate-refuse for a no-mistakes gate-worktree run of this suite.
+export FM_GATE_REFUSE_BYPASS=1
 SPAWN="$ROOT/bin/fm-spawn.sh"
 PUSH="$ROOT/bin/fm-config-push.sh"
 
@@ -64,6 +66,7 @@ make_case() {
   ln -s "$ROOT/bin/fm-spawn.sh" "$fakebin/fm-spawn.sh"
   ln -s "$ROOT/bin/fm-ff-lib.sh" "$fakebin/fm-ff-lib.sh"
   ln -s "$ROOT/bin/fm-config-inherit-lib.sh" "$fakebin/fm-config-inherit-lib.sh"
+  ln -s "$ROOT/bin/fm-gate-refuse-lib.sh" "$fakebin/fm-gate-refuse-lib.sh"
   cat > "$fakebin/fm-guard.sh" <<'SH'
 #!/usr/bin/env bash
 exit 0
