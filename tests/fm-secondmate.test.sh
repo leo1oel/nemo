@@ -22,6 +22,8 @@ set -u
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SEED="$ROOT/bin/fm-home-seed.sh"
+# Inert normally; bypass gate-refuse for a no-mistakes gate-worktree run of this suite.
+export FM_GATE_REFUSE_BYPASS=1
 SPAWN="$ROOT/bin/fm-spawn.sh"
 TEARDOWN="$ROOT/bin/fm-teardown.sh"
 HANDOFF="$ROOT/bin/fm-backlog-handoff.sh"

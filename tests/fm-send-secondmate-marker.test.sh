@@ -19,6 +19,8 @@ set -u
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck source=bin/fm-marker-lib.sh
 . "$ROOT/bin/fm-marker-lib.sh"
+# Inert normally; bypass gate-refuse for a no-mistakes gate-worktree run of this suite.
+export FM_GATE_REFUSE_BYPASS=1
 SEND="$ROOT/bin/fm-send.sh"
 
 fail() { printf 'not ok - %s\n' "$1" >&2; exit 1; }

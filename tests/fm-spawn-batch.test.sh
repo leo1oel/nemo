@@ -6,6 +6,8 @@
 set -u
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# Inert normally; bypass gate-refuse for a no-mistakes gate-worktree run of this suite.
+export FM_GATE_REFUSE_BYPASS=1
 SPAWN="$ROOT/bin/fm-spawn.sh"
 
 fail() {

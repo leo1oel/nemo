@@ -36,6 +36,10 @@ STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
 . "$FM_ROOT/bin/fm-herdr-lib.sh"
 # shellcheck source=bin/fm-marker-lib.sh
 . "$FM_ROOT/bin/fm-marker-lib.sh"
+# shellcheck source=bin/fm-gate-refuse-lib.sh
+. "$FM_ROOT/bin/fm-gate-refuse-lib.sh"
+# Refuse if a no-mistakes gate agent is steering the fleet (see the lib header).
+fm_refuse_if_gate_agent
 
 "$FM_ROOT/bin/fm-guard.sh" || true
 
