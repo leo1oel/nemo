@@ -44,6 +44,10 @@ mkdir -p "$STATE"
 # the same line set, and this library is its single definition.
 # shellcheck source=bin/fm-herdr-lib.sh
 . "$SCRIPT_DIR/fm-herdr-lib.sh"
+# Event-accelerated poll sleep (#472): return early on a herdr blocked-status
+# transition instead of blindly sleeping a full poll. Fail-safe to a plain sleep.
+# shellcheck source=bin/fm-fastwake-lib.sh
+. "$SCRIPT_DIR/fm-fastwake-lib.sh"
 
 WATCH_LOCK="$STATE/.watch.lock"
 WATCH_PATH="$SCRIPT_DIR/fm-watch.sh"
@@ -564,5 +568,9 @@ EOF
     fi
   fi
 
-  sleep "$POLL"
+  # Event-accelerated poll (#472): sleep up to POLL, but return early when any
+  # live crewmate pane hits the herdr blocked status, so the loop re-examines it
+  # within a second instead of after a full poll interval. Fail-safe to a plain
+  # sleep whenever the native fast path is unavailable (see fm-fastwake-lib.sh).
+  fm_fastwake_sleep "$POLL" "$STATE"
 done
