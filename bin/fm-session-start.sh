@@ -179,14 +179,23 @@ for meta in "$STATE"/*.meta; do
   cat "$meta"
 
   handle=$(grep '^handle=' "$meta" 2>/dev/null | tail -1 | cut -d= -f2- || true)
-  if [ -n "$handle" ]; then
-    if fm_herdr_pane_exists "$handle"; then
-      printf 'endpoint: alive (handle=%s)\n' "$handle"
-    else
-      printf 'endpoint: dead (handle=%s)\n' "$handle"
-    fi
-  else
+  kind=$(grep '^kind=' "$meta" 2>/dev/null | tail -1 | cut -d= -f2- || true)
+  if [ -z "$handle" ]; then
     printf 'endpoint: unknown (no handle recorded)\n'
+  elif [ "$kind" = secondmate ]; then
+    # A secondmate agent that exits leaves its pane alive as a bare shell, and
+    # the watcher exempts secondmates from stale-pane detection - so pane
+    # presence alone misses a dead-shell secondmate. Probe the AGENT, not just
+    # the pane, and flag a confidently dead one for respawn (AGENTS.md section 5).
+    case "$(fm_herdr_agent_alive "$handle")" in
+      alive)   printf 'endpoint: alive (handle=%s, agent live)\n' "$handle" ;;
+      dead)    printf 'endpoint: DEAD - respawn this secondmate (handle=%s, agent gone/bare shell)\n' "$handle" ;;
+      *)       printf 'endpoint: unknown (handle=%s, agent liveness unreadable - do not respawn on this alone)\n' "$handle" ;;
+    esac
+  elif fm_herdr_pane_exists "$handle"; then
+    printf 'endpoint: alive (handle=%s)\n' "$handle"
+  else
+    printf 'endpoint: dead (handle=%s)\n' "$handle"
   fi
 
   status="$STATE/$id.status"

@@ -210,6 +210,7 @@ Reconcile reality with your records before doing anything else:
 3. For meta whose direct report is gone (dead - the digest's endpoint line reads `dead`): reconcile by kind.
    For an ordinary crewmate, salvage or report.
    For `kind=secondmate`, treat it as a dead persistent direct report and respawn it with `bin/fm-spawn.sh <id> --secondmate` against the recorded `home=`.
+   The digest judges a secondmate endpoint by AGENT liveness, not just pane presence: a secondmate whose agent exited leaves its pane alive as a bare shell, so the digest reads `endpoint: DEAD - respawn this secondmate` when the pane is present but carries no agent (the watcher exempts secondmates from stale-pane detection, so this is their liveness backstop); respawn it exactly as above. An `endpoint: unknown ... agent liveness unreadable` reading is a herdr hiccup, not a confirmed death - do not respawn on that alone; re-probe.
    If the meta is missing but `data/secondmates.md` still registers the secondmate, respawn from the registry entry and its persistent on-disk home (the home is a herdr worktree that herdr never recycles, so it survives any restart).
    Do not reconstruct a secondmate's whole tree from the main home: the main firstmate reconciles only its direct reports.
    Each secondmate is a firstmate in its own home and runs this same recovery there, reconciling only work that is already its own; on finding no assigned or in-flight work it goes idle and waits for routed work, never initiating a survey or audit (section 6).

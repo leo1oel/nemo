@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
-# Claude Code "Stop" hook for the firstmate PRIMARY session only.
+# Claude Code "Stop" hook for a supervised firstmate session: the primary
+# checkout or a secondmate's own home (each runs its own watcher). Child
+# crew/scout worktrees stay exempt.
 #
 # fm-guard.sh (bin/fm-guard.sh) is pull-based: it only warns when some other
 # supervision script happens to run. A primary session that ends a turn without
@@ -58,18 +60,30 @@ else:
 ' 2>/dev/null) || exit 0
 [ "$STOP_HOOK_ACTIVE" = "false" ] || exit 0
 
-# --- scope precisely to the PRIMARY checkout --------------------------------
-# Excludes secondmate homes (the .fm-secondmate-home marker is written at seed
-# time; see bin/fm-home-seed.sh) and crewmate/scout task worktrees of
-# firstmate-on-itself (bin/fm-spawn.sh only ever hands those out as genuine
-# linked worktrees - it aborts the spawn otherwise). A linked worktree's
-# git-dir lives under the main repo's .git/worktrees/<name> and differs from
-# the common (shared) git-dir; only the main, non-worktree checkout has the
-# two equal.
-[ -f "$FM_ROOT/.fm-secondmate-home" ] && exit 0
+# --- scope to a SUPERVISED firstmate session --------------------------------
+# A supervised session is either the primary checkout OR a seeded secondmate
+# home: both run their own watcher over their own state dir and must not end a
+# turn blind (#505 - a secondmate is a firstmate in its own home). What stays
+# EXEMPT is a crewmate/scout task worktree of firstmate-on-itself, which has no
+# watcher of its own.
+#
+# The fork distinction: a secondmate home is itself a herdr worktree of the
+# firstmate repo, so its git-dir (under .git/worktrees/<name>) differs from the
+# common git-dir exactly like a child crew worktree does - the git-dir test
+# alone cannot tell them apart. The .fm-secondmate-home marker (written at seed
+# time at the home root only, never in a child worktree; bin/fm-home-seed.sh)
+# is what separates them: marker present -> supervised secondmate home; marker
+# absent with git-dir == common -> primary checkout; marker absent with git-dir
+# != common -> exempt child worktree.
 GIT_DIR=$(git -C "$FM_ROOT" rev-parse --git-dir 2>/dev/null) || exit 0
 GIT_COMMON_DIR=$(git -C "$FM_ROOT" rev-parse --git-common-dir 2>/dev/null) || exit 0
-[ "$GIT_DIR" = "$GIT_COMMON_DIR" ] || exit 0
+if [ -f "$FM_ROOT/.fm-secondmate-home" ]; then
+  :  # seeded secondmate home: supervised, guard it
+elif [ "$GIT_DIR" = "$GIT_COMMON_DIR" ]; then
+  :  # primary checkout: supervised, guard it
+else
+  exit 0  # linked child crew/scout worktree: no own watcher, exempt
+fi
 [ -f "$FM_ROOT/AGENTS.md" ] || exit 0
 [ -d "$FM_ROOT/bin" ] || exit 0
 [ -d "$STATE" ] || exit 0
