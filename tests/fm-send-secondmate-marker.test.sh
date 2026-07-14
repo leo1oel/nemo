@@ -12,7 +12,7 @@
 #   1. A send to a kind=secondmate target prepends the marker to the literal text.
 #   2. A send to a crewmate (kind=ship) target sends the bare text, no marker.
 #   3. The --key path never carries the marker.
-#   4. The marker is exactly "[fm-from-firstmate]" + ASCII 0x1f, and the
+#   4. The marker is exactly "[fm-from-firstmate]" + U+2063 invisible separator, and the
 #      fm_message_from_firstmate detector keys on that untypable sequence.
 set -u
 
@@ -124,12 +124,12 @@ test_key_path_is_not_marked() {
 
 test_marker_bytes_and_detector() {
   local expected
-  expected="[fm-from-firstmate]$(printf '\037')"
-  [ "$FM_FROMFIRST_MARK" = "$expected" ] || fail "FM_FROMFIRST_MARK is not the label + ASCII 0x1f"
+  expected="[fm-from-firstmate]$(printf '\342\201\243')"
+  [ "$FM_FROMFIRST_MARK" = "$expected" ] || fail "FM_FROMFIRST_MARK is not the label + U+2063"
   fm_message_from_firstmate "${FM_FROMFIRST_MARK}do the work" || fail "detector missed a marked message"
-  fm_message_from_firstmate "[fm-from-firstmate] typed by hand" && fail "detector matched label text without the 0x1f separator"
+  fm_message_from_firstmate "[fm-from-firstmate] typed by hand" && fail "detector matched label text without the U+2063 separator"
   fm_message_from_firstmate "ordinary captain message" && fail "detector matched an unmarked message"
-  pass "fm-marker-lib: marker is label + 0x1f and the detector keys on the untypable sequence"
+  pass "fm-marker-lib: marker is label + U+2063 and the detector keys on the untypable sequence"
 }
 
 test_secondmate_target_is_marked
