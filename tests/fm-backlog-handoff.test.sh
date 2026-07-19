@@ -64,5 +64,33 @@ test_pid_identity_locale_invariant() {
   pass "fm_pid_identity is locale-invariant"
 }
 
+# A registry line whose summary/scope prose contains a parenthetical BEFORE the
+# structured (home: ...) field must still resolve the home. The old ^[^(]* prefix
+# stopped at that first parenthesis and reported the entry as having no home.
+test_resolves_home_after_parenthetical() {
+  local d="$TMP_ROOT/paren-home" home out
+  home="$d/home-sm-x2"
+  mkdir -p "$d/root/data" "$home/data" "$home/bin"
+  printf 'sm-x2' > "$home/.fm-secondmate-home"
+  echo agents > "$home/AGENTS.md"
+  cat > "$d/root/data/secondmates.md" <<EOF
+- sm-x2 - triage duty (legacy alias kept) (home: $home; scope: triage; projects: proj-a; added 2026-07-10)
+EOF
+  cat > "$d/root/data/backlog.md" <<'EOF'
+## In flight
+
+## Queued
+- [ ] move-me-c3 - fix the parser (repo: proj-a)
+
+## Done
+EOF
+  out=$(FM_ROOT_OVERRIDE="$d/root" FM_DATA_OVERRIDE="$d/root/data" "$HANDOFF" sm-x2 move-me-c3 2>&1) \
+    || fail "paren-home: handoff failed (home not resolved past the parenthetical?): $out"
+  grep -qF 'move-me-c3' "$home/data/backlog.md" || fail "paren-home: item not moved into the secondmate home"
+  grep -qF 'move-me-c3' "$d/root/data/backlog.md" && fail "paren-home: moved item still in main backlog"
+  pass "handoff resolves the secondmate home when a parenthetical precedes the (home: ...) field"
+}
+
 test_moves_full_item_block
 test_pid_identity_locale_invariant
+test_resolves_home_after_parenthetical

@@ -83,4 +83,7 @@ if ! caller_has_merge_method "$@"; then
   merge_args=(--squash)
 fi
 
-gh-axi pr merge "$PR_NUMBER" --repo "$PR_OWNER/$PR_REPO" "${merge_args[@]}" "$@"
+# Expanding "${merge_args[@]}" on an empty array under set -u fails on bash < 4.4
+# (notably stock macOS bash 3.2), which happens when the caller forwarded a merge
+# method. The "${arr[@]+"${arr[@]}"}" idiom expands an empty array to nothing.
+gh-axi pr merge "$PR_NUMBER" --repo "$PR_OWNER/$PR_REPO" ${merge_args[@]+"${merge_args[@]}"} "$@"
