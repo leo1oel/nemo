@@ -145,7 +145,42 @@ MD
   pass "bearings-snapshot: surfaces each secondmate's authoritative home state, ownership, and unreadable homes"
 }
 
+# The default landed baseline is balanced across homes (round-robin over
+# deterministic home order), not global newest-first, so a home with the newest
+# dates cannot crowd every other home out of a tight overall cap.
+test_bearings_landed_round_robin() {
+  local main sm out
+  main="$TMP/main-rr"; mkdir -p "$main/state" "$main/data"
+  : > "$main/data/secondmates.md"
+  cat > "$main/data/backlog.md" <<'MD'
+## In flight
+
+## Queued
+
+## Done
+- [x] main-new1 - main newest - https://github.com/o/r/pull/21 (merged 2026-07-20)
+- [x] main-new2 - main second - https://github.com/o/r/pull/22 (merged 2026-07-19)
+MD
+  sm=$(make_secondmate_home "$TMP/sm-rr" mate-x <<'MD'
+## In flight
+
+## Queued
+
+## Done
+- [x] mate-old1 - mate newest - https://github.com/o/r/pull/31 (repo: demo) (merged 2026-07-10)
+- [x] mate-old2 - mate second - https://github.com/o/r/pull/32 (repo: demo) (merged 2026-07-09)
+MD
+)
+  register_secondmate "$main" mate-x "$sm"
+  out=$(run_bearings "$main" "FM_BEARINGS_LANDED=2" "FM_BEARINGS_LANDED_PER_HOME=6" -- --json) || fail "bearings failed: $out"
+  # Global newest-first would take both from the main home; round-robin takes one per home.
+  printf '%s' "$out" | jq -e '(.landed | length) == 2 and ((.landed | map(.owner) | sort) == ["(main)","mate-x"])' >/dev/null \
+    || fail "default landed must be balanced one-per-home, not global newest-first: $(printf '%s' "$out" | jq -c '.landed')"
+  pass "bearings-snapshot: default landed baseline is balanced round-robin across homes"
+}
+
 test_projection_schema
 test_local_only_default
 test_landed_rollup
 test_bearings_secondmate_surfacing
+test_bearings_landed_round_robin
