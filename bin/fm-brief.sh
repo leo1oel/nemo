@@ -96,6 +96,7 @@ Escalate only true captain-relevant outcomes by appending one line:
 States: working, needs-decision, blocked, done, failed.
 Use this only for material phase changes, a captain decision, a real blocker, a failure, or work ready for review.
 This is also how you return the answer to a marked from-firstmate request above.
+A marked request needs exactly one correlated answer after the work is done or has reached a reportable phase; it does not need a separate receipt or start acknowledgement, so never append \`working:\` merely to confirm the request arrived or that you have begun.
 Routine internal supervision, heartbeats, retries, and crewmate churn stay inside your own home and must not touch that status file.
 
 # Definition of done

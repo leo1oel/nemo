@@ -91,6 +91,28 @@ EOF
   pass "handoff resolves the secondmate home when a parenthetical precedes the (home: ...) field"
 }
 
+# The watcher identity for a live pid must be non-empty and stable across reads,
+# and on Linux it must come from /proc starttime (immune to wall-clock steps that
+# re-render the ps lstart fallback and would evict a live watcher) rather than the
+# date-based ps path (upstream #752).
+test_pid_identity_stable_and_platform() {
+  local a b
+  # shellcheck source=bin/fm-wake-lib.sh
+  . "$ROOT/bin/fm-wake-lib.sh"
+  a=$(fm_pid_identity $$) || fail "identity: read failed for a live pid"
+  b=$(fm_pid_identity $$) || fail "identity: second read failed"
+  [ -n "$a" ] || fail "identity: empty for a live pid"
+  [ "$a" = "$b" ] || fail "identity: not stable across reads: '$a' vs '$b'"
+  if [ "$(uname)" = Linux ]; then
+    case "$a" in
+      linux-starttime=*) : ;;
+      *) fail "identity: on Linux must use /proc starttime, got '$a'" ;;
+    esac
+  fi
+  pass "fm_pid_identity is non-empty, stable, and /proc-sourced on Linux"
+}
+
 test_moves_full_item_block
 test_pid_identity_locale_invariant
 test_resolves_home_after_parenthetical
+test_pid_identity_stable_and_platform
