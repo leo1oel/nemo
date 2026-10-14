@@ -1,0 +1,4 @@
+not ok - engine tz: the turn did not end handled: 1791954350	start	gen=host-28414-1791954350	primary=claude
+1791954354	failed	turn=host-28414-1791954350.1	posture=attended	rc=0	reports=1	unacked=1 2	error=0 cost=0.25 conversation_cost=0.25 input=5 cache_read=100 cache_write=10 output=20 turns=3		signal: /private/var/folders/25/sd66pgx930b20ffc13h_jgk00000gn/T/fm-supervision-host.JnVSu4/engine-tz/state/demo.status
+1791954354	to-main	the supervision session could not take this wake: the engine turn left its granted wake rows 1 2 unacknowledged; this wake is yours
+wake drain: no branch-eligible row snapshot at /private/var/folders/25/sd66pgx930b20ffc13h_jgk00000gn/T/fm-supervision-host.JnVSu4/engine-tz/state/.branch-eligible-rows; refusing to guess what this actor may consume

@@ -1,0 +1,35 @@
+ok - unknown extension conformance section selectors fail before setup
+not-autohandled: example-file (left for the handler; still unacknowledged)
+/private/var/folders/25/sd66pgx930b20ffc13h_jgk00000gn/T/fm-extension-binding.sWpWLx/remote-root/bin/fm-procevent.sh: line 257: /private/var/folders/25/sd66pgx930b20ffc13h_jgk00000gn/T/fm-extension-binding.sWpWLx/remote-root/bin/fm-task-inbox-lib.sh: No such file or directory
+/private/var/folders/25/sd66pgx930b20ffc13h_jgk00000gn/T/fm-extension-binding.sWpWLx/remote-root/bin/fm-procevent.sh: line 259: /private/var/folders/25/sd66pgx930b20ffc13h_jgk00000gn/T/fm-extension-binding.sWpWLx/remote-root/bin/fm-backend.sh: No such file or directory
+not-autohandled: flow-source (left for the handler; still unacknowledged)
+ok - the shipped file-signal package is a runnable end-to-end external adapter
+/private/var/folders/25/sd66pgx930b20ffc13h_jgk00000gn/T/fm-extension-binding.sWpWLx/remote-root/bin/fm-procevent.sh: line 257: /private/var/folders/25/sd66pgx930b20ffc13h_jgk00000gn/T/fm-extension-binding.sWpWLx/remote-root/bin/fm-task-inbox-lib.sh: No such file or directory
+/private/var/folders/25/sd66pgx930b20ffc13h_jgk00000gn/T/fm-extension-binding.sWpWLx/remote-root/bin/fm-procevent.sh: line 259: /private/var/folders/25/sd66pgx930b20ffc13h_jgk00000gn/T/fm-extension-binding.sWpWLx/remote-root/bin/fm-backend.sh: No such file or directory
+/private/var/folders/25/sd66pgx930b20ffc13h_jgk00000gn/T/fm-extension-binding.sWpWLx/remote-root/bin/fm-procevent.sh: line 257: /private/var/folders/25/sd66pgx930b20ffc13h_jgk00000gn/T/fm-extension-binding.sWpWLx/remote-root/bin/fm-task-inbox-lib.sh: No such file or directory
+/private/var/folders/25/sd66pgx930b20ffc13h_jgk00000gn/T/fm-extension-binding.sWpWLx/remote-root/bin/fm-procevent.sh: line 259: /private/var/folders/25/sd66pgx930b20ffc13h_jgk00000gn/T/fm-extension-binding.sWpWLx/remote-root/bin/fm-backend.sh: No such file or directory
+ok - the section coordinator propagates ordered failures and bounded cleanup
+ok - one external adapter registers, invokes, captures unhandled evidence, classifies, and terminally retires end to end
+not-autohandled: remote-source (left for the handler; still unacknowledged)
+not-autohandled: example-symlinked (left for the handler; still unacknowledged)
+ok - register-extension and reconcile of an unhandled extension result take their locks in one order
+
+all extension-binding tests passed
+/private/var/folders/25/sd66pgx930b20ffc13h_jgk00000gn/T/fm-extension-binding.sWpWLx/remote-root/bin/fm-procevent.sh: line 257: /private/var/folders/25/sd66pgx930b20ffc13h_jgk00000gn/T/fm-extension-binding.sWpWLx/remote-root/bin/fm-task-inbox-lib.sh: No such file or directory
+/private/var/folders/25/sd66pgx930b20ffc13h_jgk00000gn/T/fm-extension-binding.sWpWLx/remote-root/bin/fm-procevent.sh: line 259: /private/var/folders/25/sd66pgx930b20ffc13h_jgk00000gn/T/fm-extension-binding.sWpWLx/remote-root/bin/fm-backend.sh: No such file or directory
+ok - a home reached through a symlinked ancestor captures external evidence normally
+/private/var/folders/25/sd66pgx930b20ffc13h_jgk00000gn/T/fm-extension-binding.sWpWLx/remote-root/bin/fm-procevent.sh: line 257: /private/var/folders/25/sd66pgx930b20ffc13h_jgk00000gn/T/fm-extension-binding.sWpWLx/remote-root/bin/fm-task-inbox-lib.sh: No such file or directory
+/private/var/folders/25/sd66pgx930b20ffc13h_jgk00000gn/T/fm-extension-binding.sWpWLx/remote-root/bin/fm-procevent.sh: line 259: /private/var/folders/25/sd66pgx930b20ffc13h_jgk00000gn/T/fm-extension-binding.sWpWLx/remote-root/bin/fm-backend.sh: No such file or directory
+ok - serialized remote binding crosses fm-on through addressed-home capture and retirement
+
+all extension-binding tests passed
+ok - handshake execution rejects and reaps foreground descendants
+
+all extension-binding tests passed
+ok - inner result.silent host crash releases the parent lifecycle lock before terminal retry
+ok - local binding retirement requires its exact identity and disables invocation
+
+all extension-binding tests passed
+ok - independent extension conformance sections complete through isolated public homes
+
+all extension-binding tests passed

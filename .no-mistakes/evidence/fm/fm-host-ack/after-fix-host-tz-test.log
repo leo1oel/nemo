@@ -1,0 +1,3 @@
+ok - host: an attended wake the branch may take is handled on the engine, and its routine outcome never wakes main
+ok - host: an engine in another time zone than the host drains, reports, and acknowledges its granted rows
+ok - host: a turn that reports but leaves its granted rows queued hands the wake to main

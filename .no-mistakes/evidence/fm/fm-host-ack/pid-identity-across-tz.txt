@@ -1,0 +1,15 @@
+/dev/fd/63: line 14: /dev/fd/fm-path-lib.sh: No such file or directory
+mkdir: /dev/state: Permission denied
+TZ=<unset>              fixed: Wed Oct 14 05:07:00 2026     sleep 60 | pre-fix: Wed Oct 14 01:07:00 2026     sleep 60
+/dev/fd/63: line 14: /dev/fd/fm-path-lib.sh: No such file or directory
+mkdir: /dev/state: Permission denied
+TZ=UTC0                 fixed: Wed Oct 14 05:07:00 2026     sleep 60 | pre-fix: Wed Oct 14 05:07:00 2026     sleep 60
+/dev/fd/63: line 14: /dev/fd/fm-path-lib.sh: No such file or directory
+mkdir: /dev/state: Permission denied
+TZ=ENG-9                fixed: Wed Oct 14 05:07:00 2026     sleep 60 | pre-fix: Wed Oct 14 14:07:00 2026     sleep 60
+/dev/fd/63: line 14: /dev/fd/fm-path-lib.sh: No such file or directory
+mkdir: /dev/state: Permission denied
+TZ=America/Los_Angeles  fixed: Wed Oct 14 05:07:00 2026     sleep 60 | pre-fix: Tue Oct 13 22:07:00 2026     sleep 60
+/dev/fd/63: line 14: /dev/fd/fm-path-lib.sh: No such file or directory
+mkdir: /dev/state: Permission denied
+TZ=Asia/Shanghai        fixed: Wed Oct 14 05:07:00 2026     sleep 60 | pre-fix: Wed Oct 14 13:07:00 2026     sleep 60

@@ -1,0 +1,6 @@
+# host TZ=unset (CST); engine is the real claude on PATH, its Bash tool takes TZ from the login shell snapshot
+# first turn: handled	turn=host-88775-1791954680.1	posture=away	rc=0
+# outcome: {"seq":1,"epoch":1791954692,"task":"demo","wake":"signal: /private/var/folders/25/sd66pgx930b20ffc13h_jgk00000gn/T/fm-supervision-host-live.jpB58D/fm/state/demo.status","verdict":"routine","summary":"Demo worker reported its cleanup finished with nothing else needed; no PR or worktree remains, and I took no action (merge/dispatch held per away words).","silent":false,"statusEndpoint":72,"statusIdent":"strong:16777234:402150489:1791954680.415420479"}
+# second turn: handled	turn=host-88775-1791954680.2	posture=away	rc=0
+ok - supervision host live (2.1.296 (Claude Code)): a real engine handles and resumes away wakes under the branch contract without waking main
+rc=0

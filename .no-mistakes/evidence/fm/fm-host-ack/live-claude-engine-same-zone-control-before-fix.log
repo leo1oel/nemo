@@ -1,0 +1,6 @@
+# engine wrapper: /var/folders/25/sd66pgx930b20ffc13h_jgk00000gn/T//fm-tzwrap.aAl4lx/claude (TZ=Asia/Shanghai), host TZ=EDT
+# first turn: handled	turn=host-46839-1791954584.1	posture=away	rc=0
+# outcome: {"seq":1,"epoch":1791954598,"task":"demo","wake":"signal: /private/var/folders/25/sd66pgx930b20ffc13h_jgk00000gn/T/fm-supervision-host-live.OOIKFs/fm/state/demo.status","verdict":"captain","summary":"The demo worker reports its cleanup finished and nothing else is needed. No PR is recorded and its worktree is already gone, so I took no action (nothing merged or dispatched, per your away instructions).","silent":false,"statusEndpoint":72,"statusIdent":"strong:16777234:402142296:1791954584.964084675"}
+# second turn: handled	turn=host-46839-1791954584.2	posture=away	rc=0
+ok - supervision host live (2.1.296 (Claude Code)): a real engine handles and resumes away wakes under the branch contract without waking main
+rc=0
