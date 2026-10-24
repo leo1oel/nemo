@@ -1,0 +1,67 @@
+private server: unix:///private/var/folders/25/sd66pgx930b20ffc13h_jgk00000gn/T/fm-rex-test.OrmkNb/rex.sock  target: 01a16e4c-faa2-7f3e-8c93-b44f6c7f87e4:01a16e4c-faa3-7524-91b1-2a594efb7e96
+--- S0: bare fish prompt
+rex process view: {"foreground":{"pid":34754,"name":"fish","argv0":"/opt/homebrew/bin/fish"},"ancestors":[{"pid":34731,"name":"login","argv0":null}]}
+ps below foreground 34754 (pid ppid pgid tpgid comm):
+  34754 34731 34754 34754 /opt/homebrew/bin/fish
+agent_state (target commit): dead
+agent_state (base commit):   dead
+live_pids (target commit):   [34754,34731]
+ok - bare fish shell foreground reads dead
+--- S1a: claude via fish function + cac bash shim, fish job control on (shim leads its own pgroup)
+rex process view: {"foreground":{"pid":36932,"name":"bash","argv0":"bash"},"ancestors":[{"pid":34754,"name":"fish","argv0":"/opt/homebrew/bin/fish"},{"pid":34731,"name":"login","argv0":null}]}
+ps below foreground 36932 (pid ppid pgid tpgid comm):
+  36932 34754 36932 36932 bash
+  37003 36932 36932 36932 /Users/leonardo/.cac/versions/2.1.310/claude
+agent_state (target commit): alive
+agent_state (base commit):   dead
+live_pids (target commit):   [36932,34754,34731,37003]
+base commit reads: dead
+ok - S1a: shim-as-foreground over a live claude reads alive
+--- S1: claude started via fish function + cac bash shim
+rex process view: {"foreground":{"pid":34754,"name":"fish","argv0":"/opt/homebrew/bin/fish"},"ancestors":[{"pid":34731,"name":"login","argv0":null}]}
+ps below foreground 34754 (pid ppid pgid tpgid comm):
+  34754 34731 34754 34754 /opt/homebrew/bin/fish
+  39666 34754 34754 34754 bash
+  39770 39666 34754 34754 /Users/leonardo/.cac/versions/2.1.310/claude
+agent_state (target commit): alive
+agent_state (base commit):   dead
+live_pids (target commit):   [34754,34731,39770]
+harness pid in live_pids: 39770 (/Users/leonardo/.cac/versions/2.1.310/claude)
+busy_state (target commit): unknown
+program_status records: []
+--- pane capture (last 15 lines)
+
+ /private/var/folders/25/sd66pgx930b20ffc13h_jgk00000gn/T/fm-rex-test.OrmkNb
+
+ Quick safety check: Is this a project you created or one you trust? (Like your
+ own code, a well-known open source project, or work from your team). If not,
+ take a moment to review what's in this folder first.
+
+ Claude Code'll be able to read, edit, and execute files here.
+
+ Security guide
+
+ ❯ No, exit
+   Yes, I trust this folder
+
+ Enter to confirm · Esc to cancel
+ok - live claude below a fish foreground reads alive (base adapter: dead)
+--- S2: claude killed, fish prompt back
+rex process view: {"foreground":{"pid":34754,"name":"fish","argv0":"/opt/homebrew/bin/fish"},"ancestors":[{"pid":34731,"name":"login","argv0":null}]}
+ps below foreground 34754 (pid ppid pgid tpgid comm):
+  34754 34731 34754 34754 /opt/homebrew/bin/fish
+agent_state (target commit): dead
+agent_state (base commit):   dead
+live_pids (target commit):   [34754,34731]
+ok - after the harness exits, the fish foreground reads dead again
+--- S3: non-harness sleep via fish function + bash wrapper
+rex process view: {"foreground":{"pid":34754,"name":"fish","argv0":"/opt/homebrew/bin/fish"},"ancestors":[{"pid":34731,"name":"login","argv0":null}]}
+ps below foreground 34754 (pid ppid pgid tpgid comm):
+  34754 34731 34754 34754 /opt/homebrew/bin/fish
+  41433 34754 34754 34754 bash
+  41434 41433 34754 34754 sleep
+agent_state (target commit): dead
+agent_state (base commit):   dead
+live_pids (target commit):   [34754,34731]
+ok - non-harness process tree below the fish foreground reads dead, not alive
+ok - real rex: all state-changing calls stayed within this run's private server

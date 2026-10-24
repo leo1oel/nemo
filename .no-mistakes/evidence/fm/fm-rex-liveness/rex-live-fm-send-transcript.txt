@@ -1,0 +1,48 @@
+rex process view: {"fg":"fish","fg_pid":89540,"ancestors":["login"]}
+composer_state: pending
+--- pane before fm-send
+
+
+
+
+
+                                                              ● high · /effort
+────────────────────────────────────────────────────────────────────────────────
+❯ draft steer not yet submitted
+────────────────────────────────────────────────────────────────────────────────
+  ⚠ Transcript saving is off — inherited CLAUDE_CODE_CHILD_SESSION marker · r…
+  Opus 5.5 | v2.1.310 | /private/var/folders/25/sd66pgx930b20ffc13h_jgk00000g…
+  ⏵⏵ bypass permissions on (shift+tab to cycle)
+--- base commit: fm-send.sh w1 'please rebase onto main'
+fm-gate-refuse: gate agent lifecycle permitted only against lab home /private/var/folders/25/sd66pgx930b20ffc13h_jgk00000gn/T/fm-lab.ymzQ2u
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+●  WATCHER DOWN - SUPERVISION IS OFF
+●  1 task(s) in flight, but no watcher has a fresh beacon (last beat: never, grace 300s).
+●  Trust the emitted supervision protocol for this harness; do not use shell & for watcher repair.
+●  This is a supervision warning only; the requested message WILL still be sent.
+●  watcher supervision needs Stop-owned automatic recovery; inspect the hook registration and startup status before ending the turn.
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+fm-send: doorbell not typed because the agent in 01a16e4f-6857-7ad5-9a70-e7073f3e9838:01a16e4f-6857-7c7f-a93c-780f93179fc9 has exited; the steer is durably recorded at /private/var/folders/25/sd66pgx930b20ffc13h_jgk00000gn/T/fm-lab.ymzQ2u/state/w1.inbox/001.msg for recovery (stuck-crewmate-recovery), and the watcher will not re-ring a dead pane
+exit=0
+--- target commit: fm-send.sh w1 'please rebase onto main'
+fm-gate-refuse: gate agent lifecycle permitted only against lab home /private/var/folders/25/sd66pgx930b20ffc13h_jgk00000gn/T/fm-lab.ymzQ2u
+WARNING: watcher still down (same stale episode; last beat: never, grace 300s) - full banner already printed this episode.
+fm-send: doorbell skipped (composer visibly holds pending text); the steer is durably recorded at /private/var/folders/25/sd66pgx930b20ffc13h_jgk00000gn/T/fm-lab.ymzQ2u/state/w1.inbox/002.msg and the watcher will re-ring
+exit=0
+inbox records: 001.msg 002.msg handled 
+--- pane after fm-send (draft untouched, claude still running)
+
+
+
+
+
+                                                              ● high · /effort
+────────────────────────────────────────────────────────────────────────────────
+❯ draft steer not yet submitted
+────────────────────────────────────────────────────────────────────────────────
+  ⚠ Transcript saving is off — inherited CLAUDE_CODE_CHILD_SESSION marker · r…
+  Opus 5.5 | v2.1.310 | /private/var/folders/25/sd66pgx930b20ffc13h_jgk00000g…
+  ⏵⏵ bypass permissions on (shift+tab to cycle)
+agent_state after: alive
+ok - target commit: fm-send treats the live claude below the fish foreground as alive
+ok - real rex: all state-changing calls stayed within this run's private server

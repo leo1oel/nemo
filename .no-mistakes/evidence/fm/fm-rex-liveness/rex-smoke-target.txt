@@ -1,0 +1,10 @@
+ok - real rex: created the test's own session session:01a16e50-6a12-769f-b709-0235956d406b
+ok - real rex: a Rex-hosted launcher gets a focus-safe 200x50 tab in its own session; duplicates are refused
+ok - real rex: line submit, capture, and a derived viewport of exactly size.rows lines; literal and every mapped key send
+ok - real rex: current_path follows a nested shell; agent_state reads dead at a shell, ambiguous under another program
+ok - real rex: OSC 7501 records from the foreground shell drive busy_state
+ok - real rex: kill closes exactly the task tab and the recorded server proves it gone
+ok - real rex: relaunch reclaim opens a tab in the exact session, and a gone session returns 2 creating nothing
+ok - real rex: all state-changing calls stayed within this run's private server
+ok - real rex: passive reads disable autostart and do not start a stopped server
+ok - real rex: after server restart, the recorded session is gone and reclaim creates nothing
