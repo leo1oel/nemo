@@ -1,0 +1,7 @@
+target pid=43583 (sleep 300)
+fm_pid_identity  TZ=UTC0              Sun Oct 25 05:13:05 2026     sleep 300
+fm_pid_identity  TZ=America/New_York  Sun Oct 25 05:13:05 2026     sleep 300
+fm_pid_identity  TZ=ENG-9             Sun Oct 25 05:13:05 2026     sleep 300
+fm_pid_identity  TZ=Asia/Tokyo        Sun Oct 25 05:13:05 2026     sleep 300
+extension-style ps spawn (env PATH/LANG/LC_ALL/TZ=UTC0): Sun Oct 25 05:13:05 2026     sleep 300
+pre-change extension spawn (no TZ in env):            Sun Oct 25 13:13:05 2026     sleep 300

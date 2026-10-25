@@ -1,0 +1,15 @@
+home=/private/var/folders/25/sd66pgx930b20ffc13h_jgk00000gn/T/fm-supervision-host.8XMHb9/live-reverted host-TZ=UTC0 engine-wrapper-TZ=America/New_York
+=== state/.supervision-host.log ===
+1792905143	start	gen=host-19346-1792905143	primary=claude
+1792905158	failed	turn=host-19346-1792905143.1	posture=attended	rc=0	reports=1	unacked=1 2	error=0 cost=0.023222 conversation_cost=0.023222 input=8 cache_read=67796 cache_write=2399 output=683 turns=4		signal: /private/var/folders/25/sd66pgx930b20ffc13h_jgk00000gn/T/fm-supervision-host.8XMHb9/live-reverted/state/demo.status
+1792905158	to-main	the supervision session could not take this wake: the engine turn left its granted wake rows 1 2 unacknowledged; this wake is yours
+=== wake queue (state/.wake-queue) ===
+1792905144	1	signal	demo.status	signal: /private/var/folders/25/sd66pgx930b20ffc13h_jgk00000gn/T/fm-supervision-host.8XMHb9/live-reverted/state/demo.status
+1792905144	2	signal	demo.status	signal: /private/var/folders/25/sd66pgx930b20ffc13h_jgk00000gn/T/fm-supervision-host.8XMHb9/live-reverted/state/demo.status
+=== host.rc ===
+0
+=== host.out ===
+watcher: started pid=19514 (beacon fresh)
+signal: /private/var/folders/25/sd66pgx930b20ffc13h_jgk00000gn/T/fm-supervision-host.8XMHb9/live-reverted/state/demo.status
+supervision-host: the supervision session could not take this wake: the engine turn left its granted wake rows 1 2 unacknowledged; this wake is yours
+=== branch reports ===

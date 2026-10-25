@@ -1,0 +1,10 @@
+home=/private/var/folders/25/sd66pgx930b20ffc13h_jgk00000gn/T/fm-supervision-host.8Z1OED/live-fixed3 host-TZ=UTC0 engine-wrapper-TZ=America/New_York
+=== state/.supervision-host.log ===
+1792905117	start	gen=host-6597-1792905117	primary=claude
+1792905131	handled	turn=host-6597-1792905117.1	posture=attended	rc=0	reports=1	error=0 cost=0.019498 conversation_cost=0.019498 input=8 cache_read=67660 cache_write=2019 output=464 turns=4	signal: /private/var/folders/25/sd66pgx930b20ffc13h_jgk00000gn/T/fm-supervision-host.8Z1OED/live-fixed3/state/demo.status
+=== wake queue (state/.wake-queue) ===
+=== host.rc ===
+(host still parked: no hand-back to main)
+=== host.out ===
+watcher: started pid=6769 (beacon fresh)
+=== branch reports ===
